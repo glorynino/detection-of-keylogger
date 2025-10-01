@@ -1,7 +1,7 @@
 # Système de Détection de Keyloggers
 
 ## Description
-Un agent de sécurité qui surveille et détecte les keyloggers en temps réel basé sur des règles comportementales (sans IA).
+Un agent de sécurité qui surveille et détecte les keyloggers en temps réel basé sur des règles comportementales.
 
 ## Architecture
 
