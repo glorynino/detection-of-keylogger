@@ -1,0 +1,17 @@
+psutil==5.9.6 # hadi elle aide a surveiller les processus li rahom en cours d'exécution wla recuperer leurs informations et les analyser 
+
+
+pywin32==306 #Manipuler le registre Windows.Gérer les fenêtres et services Windows
+            #Automatiser certaines tâches spécifiques au système Windows.
+tkinter-tooltip==2.0.0 #hadi ida ma3ambalkch ghir quitti l projet 
+
+
+colorama==0.4.6 #hadi bch ghir tu affiche la couleur dans la console c pas important
+
+
+watchdog==3.0.0#bch tu surveille les fichier en temps reel (hna on va l'utiliser pour surveiller kima l fichier %TEMP% wla %APPDATA% etc..)
+                #detecte les frappes ou les evenement kima cree wla modif un fichier 
+
+
+
+requests==2.31.0 # pour faire des requêtes HTTP très facilement
