@@ -58,7 +58,7 @@ SUSPICIOUS_PORTS = [
     80, 443, 8080, 8443, 4444, 6666, 7777
 ]
 
-# Configuration des logs
+# Configuration des logs ma3netha les appelle li rahom yesraw ze3ma proces 3eyet l api
 LOG_CONFIG = {
     'level': 'INFO',
     'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',

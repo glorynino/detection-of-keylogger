@@ -20,8 +20,9 @@ class KeyloggerDetectorAgent:
     
     def __init__(self):
         # Composants du système
-        self.process_monitor = ProcessMonitor(MONITOR_CONFIG['process_check_interval'])
-        self.api_detector = APIDetector()
+        #cette foonction va intialiser les attribut en generale ( constructeur )
+        self.process_monitor = ProcessMonitor(MONITOR_CONFIG['process_check_interval'])#Surveille en continu les processus actifs sur le système. Il détecte l’apparition de nouveaux processus et la terminaison de ceux existants, ce qui permet d’identifier des comportements suspects liés à des keyloggers.
+        self.api_detector = APIDetector()#ils interceptent et analysent les appels aux API système effectués par les processus en cours d’exécution.
         self.file_monitor = FileMonitor(MONITOR_CONFIG['file_check_interval'])
         self.persistence_checker = PersistenceChecker()
         self.rules_engine = RulesEngine()
@@ -35,7 +36,7 @@ class KeyloggerDetectorAgent:
         
         # Configuration
         self.scan_interval = MONITOR_CONFIG['scan_interval']
-        self.api_scan_interval = 30  # secondes
+        self.api_scan_interval = 30  # secondes le temps entre chaque scan d'api
         self.persistence_scan_interval = 300  # 5 minutes
         
         # Statistiques
@@ -52,6 +53,7 @@ class KeyloggerDetectorAgent:
     
     def _setup_callbacks(self):
         """Configure les callbacks entre les composants"""
+        #ici kes call back quand les composnants detectent quelque chose d'anormal il vont appele les fonction qu'il gerent sa.
         # Callback pour les nouveaux processus
         self.process_monitor.add_callback(self._on_process_change)
         
@@ -123,6 +125,7 @@ class KeyloggerDetectorAgent:
     
     def _api_scan_loop(self):
         """Boucle de scan des API"""
+        #on scan les api car les keylogger marche avec les api
         while self.running:
             try:
                 self._perform_api_scan()
@@ -190,6 +193,8 @@ class KeyloggerDetectorAgent:
     
     def _perform_persistence_scan(self):
         """Effectue un scan de persistance"""
+        #La persistance, en cybersécurité, désigne la capacité d’un logiciel malveillant
+        #(comme un keylogger) à rester actif sur un système
         try:
             methods = self.persistence_checker.check_all_persistence_methods()
             

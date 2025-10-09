@@ -8,7 +8,7 @@ from enum import Enum
 
 
 class RuleSeverity(Enum):
-    """Niveaux de sévérité des règles"""
+    """Niveaux de sévérité des règles c on voit belli il detcte rien ne9ssou"""
     LOW = 1
     MEDIUM = 2
     HIGH = 3
@@ -17,8 +17,15 @@ class RuleSeverity(Enum):
 
 class RuleResult:
     """Résultat d'une règle de détection"""
-    
-    def __init__(self, rule_name: str, triggered: bool, score: int, 
+    #les parametre de la fonction init
+    #rule name pour savoire quel regle a etait utiliser
+    #triggered pour savoire si la regle a etait declencher
+    #score pour savoire le score de la regle
+    #severity pour savoire le niveau de severite
+    #details pour savoire les details de la regle donc medium low ...
+    #details pour savoire les details de la regle
+    #evidence pour savoire les preuves
+    def __init__(self, rule_name: str , triggered: bool, score: int, 
                  severity: RuleSeverity, details: str = "", 
                  evidence: Dict[str, Any] = None):
         self.rule_name = rule_name
@@ -41,6 +48,8 @@ class BaseRule(ABC):
         self.severity = severity
         self.enabled = True
     
+    #had la methode c la methode que chaque classe doit implementer car 
+    # c elle fait le check des regle a travers le dictionaire quel resoie en parametre
     @abstractmethod
     def check(self, data: Dict[str, Any]) -> RuleResult:
         """
