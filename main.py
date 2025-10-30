@@ -9,6 +9,7 @@ import signal
 from core.agent import KeyloggerDetectorAgent
 from gui.main_window import KeyloggerDetectorGUI
 from alerts.logger import security_logger
+from core.agent import KeyloggerDetectorAgent
 
 
 def signal_handler(signum, frame):
@@ -61,16 +62,24 @@ def run_console_mode():
 def run_gui_mode():
     """Lance le mode interface graphique"""
     print("Détecteur de Keyloggers - Mode Interface Graphique")
+    print("L'interface graphique va s'ouvrir...")
+    print("Les logs s'afficheront dans l'interface, pas dans cette console.")
     
     try:
         # Créer et lancer l'interface graphique
+        from gui.main_window import KeyloggerDetectorGUI
         app = KeyloggerDetectorGUI()
         app.run()
         
+    except ImportError as e:
+        print(f"Erreur import GUI: {e}")
+        print("Vérifiez que gui/main_window.py existe et a les bonnes dépendances")
+        input("Appuyez sur Entrée pour quitter...")
     except Exception as e:
-        print(f"[Main] Erreur dans le mode GUI: {e}")
-        security_logger.log_system_event("ERROR", f"Erreur dans le mode GUI: {e}", "ERROR")
-        sys.exit(1)
+        print(f"Erreur dans le mode GUI: {e}")
+        import traceback
+        traceback.print_exc()
+        input("Appuyez sur Entrée pour quitter...")
 
 
 def run_test_mode():

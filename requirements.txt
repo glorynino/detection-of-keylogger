@@ -9,7 +9,7 @@ tkinter-tooltip==2.0.0 #hadi ida ma3ambalkch ghir quitti l projet
 colorama==0.4.6 #hadi bch ghir tu affiche la couleur dans la console c pas important
 
 
-watchdog==3.0.0#bch tu surveille les fichier en temps reel (hna on va l'utiliser pour surveiller kima l fichier %TEMP% wla %APPDATA% etc..)
+watchdog==3.0.0 #bch tu surveille les fichier en temps reel (hna on va l'utiliser pour surveiller kima l fichier %TEMP% wla %APPDATA% etc..)
                 #detecte les frappes ou les evenement kima cree wla modif un fichier 
 
 

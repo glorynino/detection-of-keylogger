@@ -4,7 +4,7 @@ Agent principal de surveillance et détection de keyloggers
 
 import time
 import threading
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Callable
 from core.process_monitor import ProcessMonitor, ProcessInfo
 from core.api_detector import APIDetector
 from core.file_monitor import FileMonitor, FileActivity, NetworkConnection
@@ -47,8 +47,27 @@ class KeyloggerDetectorAgent:
             'keyloggers_detected': 0
         }
         
-        # Configurer les callbacks
+        # Système de callback pour la GUI
+        self.gui_callbacks = []
+        
+        # Données en temps réel pour la GUI
+        self.recent_activities = []
+        self.current_processes = {}
+        
+        # Configurer les callbacks internes
         self._setup_callbacks()
+    
+    def add_gui_callback(self, callback: Callable):
+        """Ajoute un callback pour la GUI"""
+        self.gui_callbacks.append(callback)
+    
+    def _notify_gui(self, event_type: str, data: Dict[str, Any]):
+        """Notifie tous les callbacks GUI"""
+        for callback in self.gui_callbacks:
+            try:
+                callback(event_type, data)
+            except Exception as e:
+                print(f"Erreur callback GUI: {e}")
     
     def _setup_callbacks(self):
         """Configure les callbacks entre les composants"""
@@ -87,6 +106,7 @@ class KeyloggerDetectorAgent:
         self.persistence_scan_thread.start()
         
         security_logger.log_system_event("AGENT", "Agent de surveillance démarré", "INFO")
+        self._notify_gui("AGENT_STARTED", {"message": "Agent démarré"})
         print("[Agent] Surveillance démarrée")
     
     def stop(self):
@@ -109,6 +129,7 @@ class KeyloggerDetectorAgent:
             self.persistence_scan_thread.join(timeout=5)
         
         security_logger.log_system_event("AGENT", "Agent de surveillance arrêté", "INFO")
+        self._notify_gui("AGENT_STOPPED", {"message": "Agent arrêté"})
         print("[Agent] Surveillance arrêtée")
     
     def _main_scan_loop(self):
@@ -116,29 +137,59 @@ class KeyloggerDetectorAgent:
         while self.running:
             try:
                 self._perform_main_scan()
+                
+                # Notifier la GUI du scan
+                self._notify_gui("SCAN_COMPLETE", {
+                    "scan_type": "main",
+                    "scan_id": self.stats['total_scans'],
+                    "timestamp": time.time()
+                })
+                
                 time.sleep(self.scan_interval)
             except Exception as e:
-                security_logger.log_system_event("ERROR", f"Erreur dans la boucle principale: {e}", "ERROR")
+                error_msg = f"Erreur dans la boucle principale: {e}"
+                security_logger.log_system_event("ERROR", error_msg, "ERROR")
+                self._notify_gui("ERROR", {"message": error_msg})
                 time.sleep(self.scan_interval)
     
     def _api_scan_loop(self):
         """Boucle de scan des API"""
         while self.running:
             try:
-                self._perform_api_scan()
+                scan_results = self._perform_api_scan()
+                
+                # Notifier la GUI des résultats API
+                self._notify_gui("API_SCAN_COMPLETE", {
+                    "processes_scanned": len(scan_results.get('processes', [])),
+                    "suspicious_found": len(scan_results.get('suspicious_processes', [])),
+                    "timestamp": time.time()
+                })
+                
                 time.sleep(self.api_scan_interval)
             except Exception as e:
-                security_logger.log_system_event("ERROR", f"Erreur dans le scan API: {e}", "ERROR")
+                error_msg = f"Erreur dans le scan API: {e}"
+                security_logger.log_system_event("ERROR", error_msg, "ERROR")
+                self._notify_gui("ERROR", {"message": error_msg})
                 time.sleep(self.api_scan_interval)
     
     def _persistence_scan_loop(self):
         """Boucle de scan de persistance"""
         while self.running:
             try:
-                self._perform_persistence_scan()
+                scan_results = self._perform_persistence_scan()
+                
+                # Notifier la GUI des résultats de persistance
+                self._notify_gui("PERSISTENCE_SCAN_COMPLETE", {
+                    "methods_found": len(scan_results.get('methods', [])),
+                    "suspicious_methods": len(scan_results.get('suspicious_methods', [])),
+                    "timestamp": time.time()
+                })
+                
                 time.sleep(self.persistence_scan_interval)
             except Exception as e:
-                security_logger.log_system_event("ERROR", f"Erreur dans le scan de persistance: {e}", "ERROR")
+                error_msg = f"Erreur dans le scan de persistance: {e}"
+                security_logger.log_system_event("ERROR", error_msg, "ERROR")
+                self._notify_gui("ERROR", {"message": error_msg})
                 time.sleep(self.persistence_scan_interval)
     
     def _perform_main_scan(self):
@@ -151,15 +202,25 @@ class KeyloggerDetectorAgent:
         # Nettoyer les anciens processus
         self.rules_engine.cleanup_old_processes()
         
+        # Mettre à jour les données pour la GUI
+        self._update_gui_data()
+        
         # Log du résumé périodique
         if self.stats['total_scans'] % 10 == 0:  # Toutes les 10 scans
             self._log_summary()
     
-    def _perform_api_scan(self):
+    def _perform_api_scan(self) -> Dict[str, Any]:
         """Effectue un scan des API pour tous les processus"""
+        scan_results = {
+            'processes': [],
+            'suspicious_processes': [],
+            'total_scanned': 0
+        }
+        
         try:
             processes = self.process_monitor.get_processes()
             self.stats['processes_scanned'] += len(processes)
+            scan_results['total_scanned'] = len(processes)
             
             for process_info in processes.values():
                 try:
@@ -169,6 +230,10 @@ class KeyloggerDetectorAgent:
                     
                     # Scanner les API
                     api_results = self.api_detector.scan_process(process)
+                    api_results['pid'] = process_info.pid
+                    api_results['name'] = process_info.name
+                    
+                    scan_results['processes'].append(api_results)
                     
                     # Créer un événement pour le moteur de règles
                     event = DetectionEvent('api_scan', api_results)
@@ -181,17 +246,26 @@ class KeyloggerDetectorAgent:
                             process_info.name,
                             process_info.pid
                         )
+                        scan_results['suspicious_processes'].append(api_results)
                     
                 except Exception as e:
                     continue  # Ignorer les erreurs sur des processus individuels
                     
         except Exception as e:
             security_logger.log_system_event("ERROR", f"Erreur lors du scan API: {e}", "ERROR")
+        
+        return scan_results
     
-    def _perform_persistence_scan(self):
+    def _perform_persistence_scan(self) -> Dict[str, Any]:
         """Effectue un scan de persistance"""
+        scan_results = {
+            'methods': [],
+            'suspicious_methods': []
+        }
+        
         try:
             methods = self.persistence_checker.check_all_persistence_methods()
+            scan_results['methods'] = [method.to_dict() for method in methods]
             
             for method in methods:
                 if method.is_suspicious():
@@ -207,8 +281,32 @@ class KeyloggerDetectorAgent:
                         method.risk_score
                     )
                     
+                    scan_results['suspicious_methods'].append(method.to_dict())
+                    
         except Exception as e:
             security_logger.log_system_event("ERROR", f"Erreur lors du scan de persistance: {e}", "ERROR")
+        
+        return scan_results
+    
+    def _update_gui_data(self):
+        """Met à jour les données pour la GUI"""
+        try:
+            # Obtenir les processus actuels
+            self.current_processes = self.process_monitor.get_processes()
+            
+            # Obtenir les processus suspects
+            suspicious_processes = self.rules_engine.get_suspicious_processes()
+            
+            # Notifier la GUI des données mises à jour
+            self._notify_gui("DATA_UPDATE", {
+                "total_processes": len(self.current_processes),
+                "suspicious_processes": len(suspicious_processes),
+                "active_alerts": len(self.alert_manager.alerts),
+                "agent_stats": self.stats.copy()
+            })
+            
+        except Exception as e:
+            print(f"Erreur mise à jour données GUI: {e}")
     
     def _on_process_change(self, new_processes: List[ProcessInfo], terminated_processes: List[ProcessInfo]):
         """Callback pour les changements de processus"""
@@ -224,6 +322,14 @@ class KeyloggerDetectorAgent:
                 process.pid,
                 f"Exe: {process.exe}"
             )
+            
+            # Notifier la GUI
+            self._notify_gui("NEW_PROCESS", {
+                "pid": process.pid,
+                "name": process.name,
+                "exe": process.exe,
+                "timestamp": time.time()
+            })
         
         for process in terminated_processes:
             security_logger.log_process_activity(
@@ -231,6 +337,13 @@ class KeyloggerDetectorAgent:
                 process.name,
                 process.pid
             )
+            
+            # Notifier la GUI
+            self._notify_gui("TERMINATED_PROCESS", {
+                "pid": process.pid,
+                "name": process.name,
+                "timestamp": time.time()
+            })
     
     def _on_file_activity(self, event_type: str, data):
         """Callback pour les activités de fichiers"""
@@ -246,6 +359,15 @@ class KeyloggerDetectorAgent:
                 data.process_name,
                 data.process_pid
             )
+            
+            # Notifier la GUI
+            self._notify_gui("FILE_ACTIVITY", {
+                "file_path": data.file_path,
+                "activity_type": data.activity_type,
+                "process_name": data.process_name,
+                "process_pid": data.process_pid,
+                "timestamp": time.time()
+            })
         
         elif event_type == 'network_connection':
             # Créer un événement pour le moteur de règles
@@ -260,6 +382,14 @@ class KeyloggerDetectorAgent:
                     data.process_name,
                     data.pid
                 )
+                
+                # Notifier la GUI
+                self._notify_gui("NETWORK_ACTIVITY", {
+                    "remote_address": f"{data.raddr.ip}:{data.raddr.port}",
+                    "process_name": data.process_name,
+                    "pid": data.pid,
+                    "timestamp": time.time()
+                })
     
     def _on_rules_alert(self, alert_data: Dict[str, Any]):
         """Callback pour les alertes du moteur de règles"""
@@ -281,6 +411,18 @@ class KeyloggerDetectorAgent:
             alert.process_name,
             alert.process_pid
         )
+        
+        # Notifier la GUI
+        self._notify_gui("NEW_ALERT", {
+            "alert_id": alert.alert_id,
+            "alert_type": alert.alert_type,
+            "severity": alert.severity.name,
+            "process_name": alert.process_name,
+            "process_pid": alert.process_pid,
+            "title": alert.title,
+            "description": alert.description,
+            "timestamp": alert.timestamp
+        })
         
         # Incrémenter le compteur de keyloggers détectés
         if alert_data.get('total_score', 0) >= 30:  # Seuil élevé
@@ -317,6 +459,15 @@ class KeyloggerDetectorAgent:
                 'uptime': uptime_str,
                 'total_scans': self.stats['total_scans'],
                 'processes_scanned': self.stats['processes_scanned']
+            })
+            
+            # Notifier la GUI du résumé
+            self._notify_gui("SUMMARY_UPDATE", {
+                "uptime": uptime_str,
+                "total_processes": rules_summary['total_processes'],
+                "suspicious_processes": rules_summary['suspicious_processes'],
+                "total_alerts": alerts_summary['total_alerts'],
+                "total_scans": self.stats['total_scans']
             })
             
         except Exception as e:
@@ -364,6 +515,7 @@ class KeyloggerDetectorAgent:
         self._perform_persistence_scan()
         
         security_logger.log_system_event("SCAN", "Scan forcé effectué", "INFO")
+        self._notify_gui("FORCED_SCAN", {"message": "Scan forcé effectué"})
     
     def get_alert_manager(self) -> AlertManager:
         """Retourne le gestionnaire d'alertes"""

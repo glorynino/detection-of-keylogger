@@ -8,6 +8,13 @@ from typing import Dict, List, Any, Optional
 from enum import Enum
 from collections import deque
 
+# Notification Windows (optionnelle)
+try:
+    from win10toast import ToastNotifier
+    _toaster = ToastNotifier()
+except Exception:
+    _toaster = None
+
 
 class AlertSeverity(Enum):
     """Niveaux de sévérité des alertes"""
@@ -114,7 +121,7 @@ class AlertManager:
         description = f"Le processus {process_name} (PID: {process_pid}) présente des " \
                      f"comportements suspects de keylogger. Score de risque: {score}"
         
-        return self.create_alert(
+        alert = self.create_alert(
             alert_type="KEYLOGGER_DETECTED",
             title=title,
             description=description,
@@ -123,6 +130,17 @@ class AlertManager:
             process_pid=process_pid,
             evidence=evidence
         )
+
+        # Afficher une notification Windows si possible (win10toast)
+        if _toaster:
+            try:
+                # titre court + description
+                _toaster.show_toast(title, description, duration=6, threaded=True)
+            except Exception:
+                # ne pas faire planter l'agent si la notification échoue
+                pass
+
+        return alert
     
     def create_api_alert(self, process_name: str, process_pid: int, 
                         suspicious_apis: List[str]) -> Alert:

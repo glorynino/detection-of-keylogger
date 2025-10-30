@@ -18,7 +18,7 @@ def on_press(key):
 
 print("Keylogger démarré. Appuyez sur des touches...")
 # Démarre l'écouteur
-with Listener(on_press=on_press) as listener: 
+with Listener(on_press=on_press) as listener:
     #hnaya faut savoir que le "with" gère automatiquement le démarrage et l'arrêt
     #donc pas la peine de start le listener explicitement
     listener.join()  # Garde le script en cours d'exécution
