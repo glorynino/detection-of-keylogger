@@ -1,0 +1,41 @@
+;
+n
+b
+x
+d
+v
+c
+k
+j
+b
+Touche spéciale: Key.space
+x
+v
+c
+b
+Touche spéciale: Key.up
+Touche spéciale: Key.up
+Touche spéciale: Key.up
+Touche spéciale: Key.down
+Touche spéciale: Key.down
+Touche spéciale: Key.enter
+j
+k
+b
+k
+j
+n
+l
+k
+j
+n
+l
+n
+l
+n
+c
+l
+e
+a
+r
+Touche spéciale: Key.enter

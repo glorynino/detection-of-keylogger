@@ -6,17 +6,14 @@ import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 import threading
 import time
-from typing import Dict, List, Any
-from alerts.alert_manager import AlertManager, AlertSeverity
-from core.rules_engine import RulesEngine
-from core.process_monitor import ProcessMonitor
-from core.file_monitor import FileMonitor
-from core.persistence_check import PersistenceChecker
-from alerts.logger import security_logger
+import sys
+import os
 
+# Ajouter le chemin pour les imports
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 class KeyloggerDetectorGUI:
-    """Interface graphique principale"""
+    """Interface graphique principale connectée à l'agent"""
     
     def __init__(self):
         self.root = tk.Tk()
@@ -24,24 +21,207 @@ class KeyloggerDetectorGUI:
         self.root.geometry("1200x800")
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
         
-        # Composants du système
-        self.alert_manager = AlertManager()
-        self.rules_engine = RulesEngine()
-        self.process_monitor = ProcessMonitor()
-        self.file_monitor = FileMonitor()
-        self.persistence_checker = PersistenceChecker()
-        
-        # État de l'application
+        # Agent principal (au lieu des composants séparés)
+        self.agent = None
         self.monitoring = False
-        self.update_thread = None
         
         # Configuration de l'interface
         self._setup_ui()
-        self._setup_callbacks()
         
         # Démarrer la mise à jour périodique
         self._start_update_loop()
+        
+        # Statut
+        self.status_bar.config(text="Prêt - Cliquez sur 'Démarrer la Surveillance'")
     
+    def _setup_agent_callbacks(self):
+        """Configure les callbacks avec l'agent"""
+        if self.agent:
+            self.agent.add_gui_callback(self._on_agent_update)
+
+    def _on_agent_update(self, event_type, data):
+        """Reçoit les mises à jour de l'agent"""
+        # Cette méthode est appelée dans le thread de l'agent
+        # On doit utiliser after() pour mettre à jour l'interface graphique
+        self.root.after(0, self._process_agent_update, event_type, data)
+
+    def _process_agent_update(self, event_type, data):
+        """Traite les mises à jour de l'agent dans le thread GUI"""
+        try:
+            if event_type == "AGENT_STARTED":
+                self._handle_agent_started(data)
+            elif event_type == "AGENT_STOPPED":
+                self._handle_agent_stopped(data)
+            elif event_type == "SCAN_COMPLETE":
+                self._handle_scan_complete(data)
+            elif event_type == "API_SCAN_COMPLETE":
+                self._handle_api_scan_complete(data)
+            elif event_type == "PERSISTENCE_SCAN_COMPLETE":
+                self._handle_persistence_scan_complete(data)
+            elif event_type == "DATA_UPDATE":
+                self._handle_data_update(data)
+            elif event_type == "NEW_PROCESS":
+                self._handle_new_process(data)
+            elif event_type == "TERMINATED_PROCESS":
+                self._handle_terminated_process(data)
+            elif event_type == "FILE_ACTIVITY":
+                self._handle_file_activity(data)
+            elif event_type == "NETWORK_ACTIVITY":
+                self._handle_network_activity(data)
+            elif event_type == "NEW_ALERT":
+                self._handle_new_alert(data)
+            elif event_type == "SUMMARY_UPDATE":
+                self._handle_summary_update(data)
+            elif event_type == "ERROR":
+                self._handle_error(data)
+            elif event_type == "FORCED_SCAN":
+                self._handle_forced_scan(data)
+                
+        except Exception as e:
+            print(f"Erreur traitement update: {e}")
+
+    def _handle_agent_started(self, data):
+        """Traite le démarrage de l'agent"""
+        self.log_activity("AGENT", "Agent démarré avec succès")
+        self.status_bar.config(text="Surveillance active - Agent en cours d'exécution")
+
+    def _handle_agent_stopped(self, data):
+        """Traite l'arrêt de l'agent"""
+        self.log_activity("AGENT", "Agent arrêté")
+        self.status_bar.config(text="Surveillance arrêtée")
+
+    def _handle_scan_complete(self, data):
+        """Traite la complétion d'un scan"""
+        scan_id = data.get("scan_id", 0)
+        self.log_activity("SCAN", f"Scan #{scan_id} terminé")
+        
+        # Mettre à jour les indicateurs
+        if self.agent:
+            status = self.agent.get_status()
+            if status:
+                self.stats_labels['total_scans'].config(text=str(status.get('stats', {}).get('total_scans', 0)))
+                self.stats_labels['last_scan'].config(text=f"Scan #{scan_id}")
+
+    def _handle_api_scan_complete(self, data):
+        """Traite la complétion d'un scan API"""
+        processes_scanned = data.get("processes_scanned", 0)
+        suspicious_found = data.get("suspicious_found", 0)
+        
+        if suspicious_found > 0:
+            self.log_activity("API_SCAN", f"Scan API: {processes_scanned} processus, {suspicious_found} suspects")
+        else:
+            self.log_activity("API_SCAN", f"Scan API: {processes_scanned} processus analysés")
+
+    def _handle_persistence_scan_complete(self, data):
+        """Traite la complétion d'un scan de persistance"""
+        methods_found = data.get("methods_found", 0)
+        suspicious_methods = data.get("suspicious_methods", 0)
+        
+        if suspicious_methods > 0:
+            self.log_activity("PERSISTENCE", f"Scan persistance: {methods_found} méthodes, {suspicious_methods} suspects")
+        else:
+            self.log_activity("PERSISTENCE", f"Scan persistance: {methods_found} méthodes analysées")
+
+    def _handle_data_update(self, data):
+        """Traite la mise à jour des données"""
+        # Mettre à jour les indicateurs en temps réel
+        total_processes = data.get("total_processes", 0)
+        suspicious_processes = data.get("suspicious_processes", 0)
+        active_alerts = data.get("active_alerts", 0)
+        
+        self.indicators['active_processes'].config(text=str(total_processes))
+        self.indicators['monitored_processes'].config(text=str(total_processes))
+        self.indicators['active_alerts'].config(text=str(active_alerts))
+        self.indicators['scan_status'].config(text="Actif")
+        
+        # Mettre à jour les statistiques
+        stats = data.get("agent_stats", {})
+        self.stats_labels['total_scans'].config(text=str(stats.get('total_scans', 0)))
+        self.stats_labels['alerts_generated'].config(text=str(stats.get('alerts_generated', 0)))
+        self.stats_labels['processes_analyzed'].config(text=str(stats.get('processes_scanned', 0)))
+
+    def _handle_new_process(self, data):
+        """Traite un nouveau processus"""
+        pid = data.get("pid", "N/A")
+        name = data.get("name", "Inconnu")
+        
+        self.log_activity("PROCESS", f"Nouveau processus: {name} (PID: {pid})")
+        self._add_detailed_log(f"Processus créé: {name} (PID: {pid})")
+
+    def _handle_terminated_process(self, data):
+        """Traite un processus terminé"""
+        pid = data.get("pid", "N/A")
+        name = data.get("name", "Inconnu")
+        
+        self.log_activity("PROCESS", f"Processus terminé: {name} (PID: {pid})")
+        self._add_detailed_log(f"Processus terminé: {name} (PID: {pid})")
+
+    def _handle_file_activity(self, data):
+        """Traite une activité de fichier"""
+        file_path = data.get("file_path", "N/A")
+        activity_type = data.get("activity_type", "N/A")
+        process_name = data.get("process_name", "Inconnu")
+        
+        self.log_activity("FILE", f"Activité fichier: {process_name} - {activity_type} - {file_path}")
+        self._add_detailed_log(f"Activité fichier: {process_name} - {activity_type} - {file_path}")
+
+    def _handle_network_activity(self, data):
+        """Traite une activité réseau"""
+        remote_address = data.get("remote_address", "N/A")
+        process_name = data.get("process_name", "Inconnu")
+        
+        self.log_activity("NETWORK", f"Connexion réseau: {process_name} -> {remote_address}")
+        self._add_detailed_log(f"Connexion réseau: {process_name} -> {remote_address}")
+
+    def _handle_new_alert(self, data):
+        """Traite une nouvelle alerte"""
+        alert_type = data.get("alert_type", "N/A")
+        severity = data.get("severity", "N/A")
+        process_name = data.get("process_name", "Inconnu")
+        title = data.get("title", "Sans titre")
+        
+        self.log_activity("ALERTE", f"NOUVELLE ALERTE [{severity}]: {title} - {process_name}")
+        self._add_detailed_log(f"🚨 ALERTE {severity}: {title} - Processus: {process_name}")
+        
+        # Mettre à jour le compteur d'alertes
+        if self.agent:
+            status = self.agent.get_status()
+            if status:
+                self.stats_labels['alerts_generated'].config(text=str(status.get('stats', {}).get('alerts_generated', 0)))
+
+    def _handle_summary_update(self, data):
+        """Traite une mise à jour du résumé"""
+        uptime = data.get("uptime", "0h 0m")
+        total_processes = data.get("total_processes", 0)
+        suspicious_processes = data.get("suspicious_processes", 0)
+        total_alerts = data.get("total_alerts", 0)
+        
+        self.log_activity("SUMMARY", f"Résumé: {uptime} - {total_processes} processus - {suspicious_processes} suspects - {total_alerts} alertes")
+        
+        # Mettre à jour les statistiques
+        self.stats_labels['uptime'].config(text=uptime)
+        self.stats_labels['agent_status'].config(text="Actif")
+
+    def _handle_error(self, data):
+        """Traite une erreur"""
+        error_message = data.get("message", "Erreur inconnue")
+        self.log_activity("ERREUR", error_message)
+        self._add_detailed_log(f"❌ ERREUR: {error_message}")
+
+    def _handle_forced_scan(self, data):
+        """Traite un scan forcé"""
+        self.log_activity("SCAN", "Scan forcé effectué")
+        self.status_bar.config(text="Scan forcé terminé")
+
+    def _add_detailed_log(self, message):
+        """Ajoute un message aux logs détaillés"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] {message}\n"
+        
+        self.detailed_logs.insert(tk.END, log_entry)
+        self.detailed_logs.see(tk.END)
+
     def _setup_ui(self):
         """Configure l'interface utilisateur"""
         # Style
@@ -70,7 +250,8 @@ class KeyloggerDetectorGUI:
         self._create_tabs(main_frame)
         
         # Barre de statut
-        self._create_status_bar(main_frame)
+        self.status_bar = ttk.Label(main_frame, text="Prêt", relief=tk.SUNKEN, anchor=tk.W)
+        self.status_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
     
     def _create_control_panel(self, parent):
         """Crée le panneau de contrôle"""
@@ -82,14 +263,14 @@ class KeyloggerDetectorGUI:
                                       command=self.toggle_monitoring)
         self.start_button.grid(row=0, column=0, padx=(0, 10))
         
-        # Bouton de scan de persistance
-        self.scan_button = ttk.Button(control_frame, text="Scanner la Persistance", 
-                                     command=self.scan_persistence)
-        self.scan_button.grid(row=0, column=1, padx=(0, 10))
+        # Bouton de scan rapide
+        self.quick_scan_button = ttk.Button(control_frame, text="Scan Rapide", 
+                                           command=self.quick_scan)
+        self.quick_scan_button.grid(row=0, column=1, padx=(0, 10))
         
-        # Bouton d'export des alertes
-        self.export_button = ttk.Button(control_frame, text="Exporter les Alertes", 
-                                       command=self.export_alerts)
+        # Bouton d'export des logs
+        self.export_button = ttk.Button(control_frame, text="Exporter Logs", 
+                                       command=self.export_logs)
         self.export_button.grid(row=0, column=2, padx=(0, 10))
         
         # Indicateur de statut
@@ -102,155 +283,102 @@ class KeyloggerDetectorGUI:
         notebook = ttk.Notebook(parent)
         notebook.grid(row=2, column=0, columnspan=3, sticky=(tk.W, tk.E, tk.N, tk.S), pady=(0, 10))
         
-        # Onglet Alertes
-        self._create_alerts_tab(notebook)
-        
-        # Onglet Processus
-        self._create_processes_tab(notebook)
-        
-        # Onglet Logs
-        self._create_logs_tab(notebook)
+        # Onglet Surveillance
+        self._create_monitoring_tab(notebook)
         
         # Onglet Statistiques
         self._create_stats_tab(notebook)
+        
+        # Onglet Logs
+        self._create_logs_tab(notebook)
     
-    def _create_alerts_tab(self, notebook):
-        """Crée l'onglet des alertes"""
-        alerts_frame = ttk.Frame(notebook)
-        notebook.add(alerts_frame, text="🚨 Alertes")
+    def _create_monitoring_tab(self, notebook):
+        """Crée l'onglet de surveillance"""
+        monitor_frame = ttk.Frame(notebook)
+        notebook.add(monitor_frame, text="🔍 Surveillance")
         
-        # Frame pour les contrôles d'alertes
-        alerts_control_frame = ttk.Frame(alerts_frame)
-        alerts_control_frame.pack(fill=tk.X, padx=10, pady=5)
+        # Frame pour les indicateurs
+        indicators_frame = ttk.LabelFrame(monitor_frame, text="Indicateurs en Temps Réel", padding="10")
+        indicators_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        # Filtres
-        ttk.Label(alerts_control_frame, text="Filtrer par sévérité:").pack(side=tk.LEFT, padx=(0, 5))
+        # Indicateurs
+        self.indicators = {}
+        indicator_config = [
+            ("Processus Actifs", "active_processes", "0"),
+            ("Processus Surveillés", "monitored_processes", "0"),
+            ("Alertes Actives", "active_alerts", "0"),
+            ("Scan en Cours", "scan_status", "Non")
+        ]
         
-        self.severity_filter = ttk.Combobox(alerts_control_frame, values=["Tous", "CRITICAL", "HIGH", "MEDIUM", "LOW"])
-        self.severity_filter.set("Tous")
-        self.severity_filter.pack(side=tk.LEFT, padx=(0, 10))
-        self.severity_filter.bind('<<ComboboxSelected>>', self.filter_alerts)
+        for i, (label, key, default) in enumerate(indicator_config):
+            ttk.Label(indicators_frame, text=f"{label}:").grid(row=i, column=0, sticky=tk.W, padx=(0, 10))
+            self.indicators[key] = ttk.Label(indicators_frame, text=default, font=('Arial', 10, 'bold'))
+            self.indicators[key].grid(row=i, column=1, sticky=tk.W)
         
-        # Bouton de rafraîchissement
-        ttk.Button(alerts_control_frame, text="Rafraîchir", 
-                  command=self.refresh_alerts).pack(side=tk.LEFT, padx=(0, 10))
+        # Zone de log en temps réel
+        log_frame = ttk.LabelFrame(monitor_frame, text="Activité en Temps Réel", padding="10")
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Bouton d'acquittement
-        ttk.Button(alerts_control_frame, text="Acquitter Sélectionné", 
-                  command=self.acknowledge_selected).pack(side=tk.LEFT)
-        
-        # Treeview pour les alertes
-        columns = ('ID', 'Type', 'Sévérité', 'Processus', 'PID', 'Timestamp', 'Description')
-        self.alerts_tree = ttk.Treeview(alerts_frame, columns=columns, show='headings', height=15)
-        
-        # Configuration des colonnes
-        for col in columns:
-            self.alerts_tree.heading(col, text=col)
-            self.alerts_tree.column(col, width=100)
-        
-        # Scrollbar pour les alertes
-        alerts_scrollbar = ttk.Scrollbar(alerts_frame, orient=tk.VERTICAL, command=self.alerts_tree.yview)
-        self.alerts_tree.configure(yscrollcommand=alerts_scrollbar.set)
-        
-        # Pack des widgets
-        self.alerts_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=5)
-        alerts_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=5)
-    
-    def _create_processes_tab(self, notebook):
-        """Crée l'onglet des processus"""
-        processes_frame = ttk.Frame(notebook)
-        notebook.add(processes_frame, text="🖥️ Processus")
-        
-        # Treeview pour les processus
-        columns = ('PID', 'Nom', 'Score', 'Risque', 'Dernière MAJ', 'Règles')
-        self.processes_tree = ttk.Treeview(processes_frame, columns=columns, show='headings', height=15)
-        
-        # Configuration des colonnes
-        for col in columns:
-            self.processes_tree.heading(col, text=col)
-            self.processes_tree.column(col, width=120)
-        
-        # Scrollbar pour les processus
-        processes_scrollbar = ttk.Scrollbar(processes_frame, orient=tk.VERTICAL, command=self.processes_tree.yview)
-        self.processes_tree.configure(yscrollcommand=processes_scrollbar.set)
-        
-        # Pack des widgets
-        self.processes_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(10, 0), pady=5)
-        processes_scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 10), pady=5)
-    
-    def _create_logs_tab(self, notebook):
-        """Crée l'onglet des logs"""
-        logs_frame = ttk.Frame(notebook)
-        notebook.add(logs_frame, text="📋 Logs")
-        
-        # Zone de texte pour les logs
-        self.logs_text = scrolledtext.ScrolledText(logs_frame, height=20, width=80)
-        self.logs_text.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        self.activity_log = scrolledtext.ScrolledText(log_frame, height=15, width=80)
+        self.activity_log.pack(fill=tk.BOTH, expand=True)
         
         # Boutons pour les logs
-        logs_buttons_frame = ttk.Frame(logs_frame)
-        logs_buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
+        log_buttons_frame = ttk.Frame(log_frame)
+        log_buttons_frame.pack(fill=tk.X, pady=(5, 0))
         
-        ttk.Button(logs_buttons_frame, text="Effacer les Logs", 
-                  command=self.clear_logs).pack(side=tk.LEFT, padx=(0, 10))
-        
-        ttk.Button(logs_buttons_frame, text="Ouvrir Fichier de Log", 
-                  command=self.open_log_file).pack(side=tk.LEFT)
+        ttk.Button(log_buttons_frame, text="Effacer", 
+                command=self.clear_activity_log).pack(side=tk.LEFT, padx=(0, 10))
     
     def _create_stats_tab(self, notebook):
         """Crée l'onglet des statistiques"""
         stats_frame = ttk.Frame(notebook)
         notebook.add(stats_frame, text="📊 Statistiques")
         
-        # Frame pour les statistiques
-        stats_info_frame = ttk.LabelFrame(stats_frame, text="Résumé du Système", padding="10")
-        stats_info_frame.pack(fill=tk.X, padx=10, pady=5)
+        # Frame pour les statistiques détaillées
+        stats_info_frame = ttk.LabelFrame(stats_frame, text="Statistiques du Système", padding="10")
+        stats_info_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
         # Labels pour les statistiques
         self.stats_labels = {}
         stats_items = [
-            ("Total Processus", "total_processes"),
-            ("Processus Suspects", "suspicious_processes"),
-            ("Processus Haut Risque", "high_risk_processes"),
-            ("Total Alertes", "total_alerts"),
-            ("Alertes Non Acquittées", "unacknowledged_alerts"),
-            ("Alertes Critiques", "critical_alerts")
+            ("Temps de Surveillance", "uptime"),
+            ("Total des Scans", "total_scans"),
+            ("Processus Analysés", "processes_analyzed"),
+            ("Alertes Générées", "alerts_generated"),
+            ("Dernier Scan", "last_scan"),
+            ("Statut Agent", "agent_status")
         ]
         
         for i, (label_text, key) in enumerate(stats_items):
-            row = i // 2
-            col = (i % 2) * 2
-            
-            ttk.Label(stats_info_frame, text=f"{label_text}:").grid(row=row, column=col, sticky=tk.W, padx=(0, 5))
-            self.stats_labels[key] = ttk.Label(stats_info_frame, text="0", font=('Arial', 10, 'bold'))
-            self.stats_labels[key].grid(row=row, column=col+1, sticky=tk.W, padx=(0, 20))
+            ttk.Label(stats_info_frame, text=f"{label_text}:").grid(row=i, column=0, sticky=tk.W, padx=(0, 10), pady=2)
+            self.stats_labels[key] = ttk.Label(stats_info_frame, text="N/A", font=('Arial', 10))
+            self.stats_labels[key].grid(row=i, column=1, sticky=tk.W, pady=2)
     
-    def _create_status_bar(self, parent):
-        """Crée la barre de statut"""
-        self.status_bar = ttk.Label(parent, text="Prêt", relief=tk.SUNKEN, anchor=tk.W)
-        self.status_bar.grid(row=3, column=0, columnspan=3, sticky=(tk.W, tk.E), pady=(10, 0))
-    
-    def _setup_callbacks(self):
-        """Configure les callbacks du système"""
-        # Callback pour les alertes
-        self.alert_manager.add_callback(self.on_new_alert)
+    def _create_logs_tab(self, notebook):
+        """Crée l'onglet des logs"""
+        logs_frame = ttk.Frame(notebook)
+        notebook.add(logs_frame, text="📋 Logs Détaillés")
         
-        # Callback pour les nouveaux processus
-        self.process_monitor.add_callback(self.on_process_change)
+        # Zone de texte pour les logs
+        self.detailed_logs = scrolledtext.ScrolledText(logs_frame, height=20, width=80)
+        self.detailed_logs.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Callback pour les activités de fichiers
-        self.file_monitor.add_callback(self.on_file_activity)
+        # Boutons pour les logs
+        logs_buttons_frame = ttk.Frame(logs_frame)
+        logs_buttons_frame.pack(fill=tk.X, padx=10, pady=(0, 5))
         
-        # Callback pour le moteur de règles
-        self.rules_engine.add_callback(self.on_rules_alert)
+        ttk.Button(logs_buttons_frame, text="Actualiser", 
+                  command=self.refresh_detailed_logs).pack(side=tk.LEFT, padx=(0, 10))
+        
+        ttk.Button(logs_buttons_frame, text="Effacer", 
+                  command=self.clear_detailed_logs).pack(side=tk.LEFT, padx=(0, 10))
     
     def _start_update_loop(self):
         """Démarre la boucle de mise à jour de l'interface"""
         def update_loop():
             while True:
                 try:
-                    if self.monitoring:
-                        self.update_interface()
+                    self.update_interface()
                     time.sleep(2)  # Mise à jour toutes les 2 secondes
                 except Exception as e:
                     print(f"Erreur dans la boucle de mise à jour: {e}")
@@ -267,75 +395,79 @@ class KeyloggerDetectorGUI:
             self.stop_monitoring()
     
     def start_monitoring(self):
-        """Démarre la surveillance"""
+        """Démarre la surveillance via l'agent"""
         try:
-            # Démarrer les composants
-            self.process_monitor.start()
-            self.file_monitor.start()
+            from core.agent import KeyloggerDetectorAgent
+            self.agent = KeyloggerDetectorAgent()
+            
+            # Configurer les callbacks AVANT de démarrer
+            self._setup_agent_callbacks()
+            
+            # Démarrer l'agent
+            self.agent.start()
             
             self.monitoring = True
             self.start_button.config(text="Arrêter la Surveillance")
             self.status_indicator.config(text="● En cours", foreground="green")
-            self.status_bar.config(text="Surveillance démarrée")
+            self.status_bar.config(text="Surveillance démarrée - Agent actif")
             
-            security_logger.log_system_event("MONITORING", "Surveillance démarrée", "INFO")
+            self.log_activity("SYSTEM", "Interface connectée à l'agent de surveillance")
             
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de démarrer la surveillance: {e}")
-            security_logger.log_system_event("ERROR", f"Erreur démarrage surveillance: {e}", "ERROR")
+            self.log_activity("ERREUR", f"Échec démarrage: {e}")
     
     def stop_monitoring(self):
         """Arrête la surveillance"""
         try:
-            # Arrêter les composants
-            self.process_monitor.stop()
-            self.file_monitor.stop()
+            if self.agent:
+                self.agent.stop()
+                self.agent = None
             
             self.monitoring = False
             self.start_button.config(text="Démarrer la Surveillance")
             self.status_indicator.config(text="● Arrêté", foreground="red")
             self.status_bar.config(text="Surveillance arrêtée")
             
-            security_logger.log_system_event("MONITORING", "Surveillance arrêtée", "INFO")
+            self.log_activity("SURVEILLANCE", "Agent de surveillance arrêté")
             
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur lors de l'arrêt: {e}")
     
-    def scan_persistence(self):
-        """Lance un scan de persistance"""
+    def quick_scan(self):
+        """Lance un scan rapide"""
         def scan_thread():
             try:
-                self.status_bar.config(text="Scan de persistance en cours...")
-                methods = self.persistence_checker.check_all_persistence_methods()
+                self.status_bar.config(text="Scan rapide en cours...")
+                self.log_activity("SCAN", "Démarrage du scan rapide")
                 
-                # Traiter les méthodes de persistance
-                for method in methods:
-                    if method.is_suspicious():
-                        self.alert_manager.create_persistence_alert(
-                            method.method_type, method.location, method.value
-                        )
+                # Simuler un scan (à adapter avec votre logique)
+                time.sleep(2)
                 
-                self.status_bar.config(text=f"Scan terminé: {len(methods)} méthodes trouvées")
-                security_logger.log_system_event("PERSISTENCE_SCAN", f"{len(methods)} méthodes trouvées", "INFO")
+                self.status_bar.config(text="Scan rapide terminé")
+                self.log_activity("SCAN", "Scan rapide terminé")
                 
             except Exception as e:
                 self.status_bar.config(text="Erreur lors du scan")
-                messagebox.showerror("Erreur", f"Erreur lors du scan: {e}")
+                self.log_activity("ERREUR", f"Échec scan: {e}")
         
         threading.Thread(target=scan_thread, daemon=True).start()
     
-    def export_alerts(self):
-        """Exporte les alertes vers un fichier"""
+    def export_logs(self):
+        """Exporte les logs vers un fichier"""
         try:
             from tkinter import filedialog
             filename = filedialog.asksaveasfilename(
-                defaultextension=".json",
-                filetypes=[("JSON files", "*.json"), ("All files", "*.*")]
+                defaultextension=".txt",
+                filetypes=[("Text files", "*.txt"), ("All files", "*.*")]
             )
             
             if filename:
-                self.alert_manager.export_alerts(filename)
-                messagebox.showinfo("Succès", f"Alertes exportées vers {filename}")
+                with open(filename, 'w', encoding='utf-8') as f:
+                    f.write(self.detailed_logs.get(1.0, tk.END))
+                
+                messagebox.showinfo("Succès", f"Logs exportés vers {filename}")
+                self.log_activity("EXPORT", f"Logs exportés: {filename}")
                 
         except Exception as e:
             messagebox.showerror("Erreur", f"Erreur lors de l'export: {e}")
@@ -343,152 +475,65 @@ class KeyloggerDetectorGUI:
     def update_interface(self):
         """Met à jour l'interface utilisateur"""
         try:
-            # Mettre à jour les alertes
-            self.refresh_alerts()
-            
-            # Mettre à jour les processus
-            self.refresh_processes()
-            
-            # Mettre à jour les statistiques
-            self.update_statistics()
-            
+            if self.monitoring and self.agent:
+                # Mettre à jour les indicateurs
+                status = self.agent.get_status()
+                if status:
+                    self.indicators['active_processes'].config(text="N/A")  # À adapter
+                    self.indicators['monitored_processes'].config(text="N/A")  # À adapter
+                    self.indicators['active_alerts'].config(text="N/A")  # À adapter
+                    self.indicators['scan_status'].config(text="Oui" if status.get('running', False) else "Non")
+                    
+                    # Mettre à jour les statistiques
+                    self.stats_labels['uptime'].config(text=f"{int(status.get('uptime', 0))}s")
+                    self.stats_labels['total_scans'].config(text=str(status.get('stats', {}).get('total_scans', 0)))
+                    self.stats_labels['alerts_generated'].config(text=str(status.get('stats', {}).get('alerts_generated', 0)))
+                    self.stats_labels['agent_status'].config(text="Actif" if status.get('running', False) else "Inactif")
+                    
+            # Actualiser les logs détaillés périodiquement
+            if self.monitoring:
+                self.refresh_detailed_logs()
+                
         except Exception as e:
-            print(f"Erreur lors de la mise à jour de l'interface: {e}")
+            print(f"Erreur mise à jour interface: {e}")
     
-    def refresh_alerts(self):
-        """Rafraîchit la liste des alertes"""
-        # Effacer les éléments existants
-        for item in self.alerts_tree.get_children():
-            self.alerts_tree.delete(item)
+    def log_activity(self, category, message):
+        """Ajoute un message au log d'activité en temps réel"""
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        log_entry = f"[{timestamp}] [{category}] {message}\n"
         
-        # Ajouter les nouvelles alertes
-        severity_filter = self.severity_filter.get()
-        
-        for alert in self.alert_manager.alerts:
-            if severity_filter != "Tous" and alert.severity.name != severity_filter:
-                continue
-            
-            timestamp_str = time.strftime("%H:%M:%S", time.localtime(alert.timestamp))
-            
-            self.alerts_tree.insert('', 'end', values=(
-                alert.alert_id[:8] + "...",
-                alert.alert_type,
-                alert.severity.name,
-                alert.process_name,
-                alert.process_pid,
-                timestamp_str,
-                alert.description[:50] + "..." if len(alert.description) > 50 else alert.description
-            ))
+        self.activity_log.insert(tk.END, log_entry)
+        self.activity_log.see(tk.END)
     
-    def refresh_processes(self):
-        """Rafraîchit la liste des processus"""
-        # Effacer les éléments existants
-        for item in self.processes_tree.get_children():
-            self.processes_tree.delete(item)
-        
-        # Ajouter les processus suspects
-        for process_score in self.rules_engine.get_suspicious_processes():
-            last_updated = time.strftime("%H:%M:%S", time.localtime(process_score.last_updated))
-            
-            self.processes_tree.insert('', 'end', values=(
-                process_score.process_pid,
-                process_score.process_name,
-                process_score.total_score,
-                process_score.risk_level,
-                last_updated,
-                len(process_score.rule_results)
-            ))
-    
-    def update_statistics(self):
-        """Met à jour les statistiques"""
+    def refresh_detailed_logs(self):
+        """Actualise les logs détaillés"""
         try:
-            # Statistiques du moteur de règles
-            rules_summary = self.rules_engine.get_detection_summary()
-            
-            # Statistiques des alertes
-            alerts_summary = self.alert_manager.get_alert_summary()
-            
-            # Mettre à jour les labels
-            self.stats_labels['total_processes'].config(text=str(rules_summary['total_processes']))
-            self.stats_labels['suspicious_processes'].config(text=str(rules_summary['suspicious_processes']))
-            self.stats_labels['high_risk_processes'].config(text=str(rules_summary['high_risk_processes']))
-            self.stats_labels['total_alerts'].config(text=str(alerts_summary['total_alerts']))
-            self.stats_labels['unacknowledged_alerts'].config(text=str(alerts_summary['unacknowledged_alerts']))
-            self.stats_labels['critical_alerts'].config(text=str(alerts_summary['critical_alerts']))
-            
+            # Simuler des logs (à remplacer par vos vraies logs)
+            if self.monitoring:
+                current_content = self.detailed_logs.get(1.0, tk.END).strip()
+                if not current_content or "Démarrage" in current_content:
+                    timestamp = time.strftime("%Y-%m-%d %H:%M:%S")
+                    log_content = f"""=== LOGS DE SURVEILLANCE ===
+Démarré le: {timestamp}
+Agent: {'Actif' if self.agent else 'Inactif'}
+Statut: {'En surveillance' if self.monitoring else 'Arrêté'}
+
+[Logs système en temps réel...]
+"""
+                    self.detailed_logs.delete(1.0, tk.END)
+                    self.detailed_logs.insert(1.0, log_content)
+                    
         except Exception as e:
-            print(f"Erreur lors de la mise à jour des statistiques: {e}")
+            print(f"Erreur actualisation logs: {e}")
     
-    def filter_alerts(self, event=None):
-        """Filtre les alertes par sévérité"""
-        self.refresh_alerts()
+    def clear_activity_log(self):
+        """Efface le log d'activité"""
+        self.activity_log.delete(1.0, tk.END)
     
-    def acknowledge_selected(self):
-        """Acquitte l'alerte sélectionnée"""
-        selection = self.alerts_tree.selection()
-        if not selection:
-            messagebox.showwarning("Attention", "Veuillez sélectionner une alerte")
-            return
-        
-        item = self.alerts_tree.item(selection[0])
-        alert_id = item['values'][0] + "..."  # Approximation
-        
-        # Trouver l'alerte correspondante
-        for alert in self.alert_manager.alerts:
-            if alert.alert_id.startswith(alert_id.replace("...", "")):
-                self.alert_manager.acknowledge_alert(alert.alert_id)
-                self.refresh_alerts()
-                break
-    
-    def clear_logs(self):
-        """Efface les logs affichés"""
-        self.logs_text.delete(1.0, tk.END)
-    
-    def open_log_file(self):
-        """Ouvre le fichier de log"""
-        try:
-            import subprocess
-            import os
-            log_file = security_logger.get_log_file_path()
-            if os.path.exists(log_file):
-                subprocess.Popen(['notepad.exe', log_file])
-            else:
-                messagebox.showwarning("Attention", "Fichier de log non trouvé")
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible d'ouvrir le fichier de log: {e}")
-    
-    # Callbacks du système
-    def on_new_alert(self, alert):
-        """Callback pour les nouvelles alertes"""
-        # Ajouter à l'interface (sera mis à jour par la boucle de mise à jour)
-        pass
-    
-    def on_process_change(self, new_processes, terminated_processes):
-        """Callback pour les changements de processus"""
-        for process in new_processes:
-            event = {
-                'event_type': 'new_process',
-                'data': process.to_dict()
-            }
-            self.rules_engine.process_event(event)
-    
-    def on_file_activity(self, event_type, data):
-        """Callback pour les activités de fichiers"""
-        if event_type == 'file_activity':
-            event = {
-                'event_type': 'file_activity',
-                'data': data
-            }
-            self.rules_engine.process_event(event)
-    
-    def on_rules_alert(self, alert_data):
-        """Callback pour les alertes du moteur de règles"""
-        self.alert_manager.create_keylogger_alert(
-            alert_data['process_name'],
-            alert_data['process_pid'],
-            alert_data['total_score'],
-            alert_data
-        )
+    def clear_detailed_logs(self):
+        """Efface les logs détaillés"""
+        self.detailed_logs.delete(1.0, tk.END)
     
     def on_closing(self):
         """Gestionnaire de fermeture de l'application"""

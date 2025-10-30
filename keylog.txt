@@ -1,0 +1,201 @@
+k
+j
+f
+d
+s
+;
+k
+j
+l
+b
+h
+k
+o
+k
+p
+n
+j
+u
+i
+o
+p
+None
+None
+None
+None
+None
+None
+None
+None
+None
+None
+None
+None
+f
+d
+Touche spéciale: Key.backspace
+Touche spéciale: Key.backspace
+k
+j
+b
+f
+v
+x
+Touche spéciale: Key.enter
+l
+k
+l
+m
+l
+k
+,
+m
+l
+,
+m
+,
+m
+l
+l
+m
+,
+m
+l
+l
+,
+m
+l
+,
+m
+l
+e
+x
+l
+k
+n
+d
+s
+l
+k
+n
+s
+d
+q
+c
+k
+j
+o
+s
+o
+,
+n
+d
+k
+j
+d
+s
+s
+d
+f
+d
+s
+f
+k
+j
+h
+d
+s
+k
+j
+n
+f
+d
+j
+k
+h
+j
+g
+u
+y
+f
+h
+j
+b
+s
+d
+f
+k
+j
+e
+f
+z
+k
+j
+b
+Touche spéciale: Key.space
+f
+e
+z
+l
+'
+e
+q
+u
+i
+p
+e
+Touche spéciale: Key.space
+p
+r
+o
+f
+Touche spéciale: Key.space
+r
+o
+Touche spéciale: Key.space
+b
+None
+e
+t
+Touche spéciale: Key.space
+c
+o
+u
+r
+Touche spéciale: Key.space
+w
+e
+l
+l
+a
+Touche spéciale: Key.space
+s
+e
+r
+i
+e
+Touche spéciale: Key.space
+d
+e
+Touche spéciale: Key.space
+t
+d
+Touche spéciale: Key.space
+Touche spéciale: Key.caps_lock
+,
+Touche spéciale: Key.caps_lock
+Touche spéciale: Key.enter
+p
+o
+u
+r
+Touche spéciale: Key.space
+q
+u
+o
+i
+Touche spéciale: Key.space
+l
+e
+s
+Touche spéciale: Key.space

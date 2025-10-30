@@ -1,31 +1,22 @@
 @echo off
-echo ========================================
-echo   DETECTEUR DE KEYLOGGERS
-echo ========================================
+echo Lancement du Detecteur de Keyloggers...
+echo L'interface graphique va s'ouvrir...
+echo Les resultats s'afficheront dans l'interface, pas dans cette console.
 echo.
 
 REM Activer l'environnement virtuel
-call keylogger_detector_env\Scripts\activate.bat
+if exist "keylogger_detector_env\Scripts\activate.bat" (
+    call keylogger_detector_env\Scripts\activate.bat
+)
 
-echo Selectionnez le mode d'execution:
-echo 1. Mode Console
-echo 2. Interface Graphique  
-echo 3. Mode Test (30 secondes)
-echo.
-set /p choice="Votre choix (1-3): "
+REM Lancer le programme principal avec l'interface graphique
+python main.py --gui
 
-if "%choice%"=="1" (
-    echo Lancement en mode console...
-    python main.py
-) else if "%choice%"=="2" (
-    echo Lancement de l'interface graphique...
-    python main.py --gui
-) else if "%choice%"=="3" (
-    echo Lancement du mode test...
-    python main.py --test
-) else (
-    echo Choix invalide. Lancement du mode console par defaut...
-    python main.py
+if %errorlevel% neq 0 (
+    echo.
+    echo Erreur lors du lancement de l'interface graphique.
+    echo Tentative en mode console...
+    python main.py --console
 )
 
 pause
