@@ -10,6 +10,8 @@ from core.api_detector import APIDetector
 from core.file_monitor import FileMonitor, FileActivity, NetworkConnection
 from core.persistence_check import PersistenceChecker, PersistenceMethod
 from core.rules_engine import RulesEngine, DetectionEvent
+from core.hook_monitor import HookMonitor
+from core.behavioral_analyzer import BehavioralAnalyzer, BehavioralEvent
 from alerts.alert_manager import AlertManager, AlertSeverity
 from alerts.logger import security_logger
 from config.settings import MONITOR_CONFIG
@@ -24,6 +26,8 @@ class KeyloggerDetectorAgent:
         self.api_detector = APIDetector()
         self.file_monitor = FileMonitor(MONITOR_CONFIG['file_check_interval'])
         self.persistence_checker = PersistenceChecker()
+        self.hook_monitor = HookMonitor()
+        self.behavioral_analyzer = BehavioralAnalyzer()
         self.rules_engine = RulesEngine()
         self.alert_manager = AlertManager()
         
@@ -32,11 +36,13 @@ class KeyloggerDetectorAgent:
         self.scan_thread = None
         self.api_scan_thread = None
         self.persistence_scan_thread = None
+        self.hook_scan_thread = None
         
         # Configuration
         self.scan_interval = MONITOR_CONFIG['scan_interval']
         self.api_scan_interval = 30  # secondes
         self.persistence_scan_interval = 300  # 5 minutes
+        self.hook_scan_interval = 60  # 1 minute
         
         # Statistiques
         self.stats = {
@@ -105,6 +111,9 @@ class KeyloggerDetectorAgent:
         self.persistence_scan_thread = threading.Thread(target=self._persistence_scan_loop, daemon=True)
         self.persistence_scan_thread.start()
         
+        self.hook_scan_thread = threading.Thread(target=self._hook_scan_loop, daemon=True)
+        self.hook_scan_thread.start()
+        
         security_logger.log_system_event("AGENT", "Agent de surveillance démarré", "INFO")
         self._notify_gui("AGENT_STARTED", {"message": "Agent démarré"})
         print("[Agent] Surveillance démarrée")
@@ -127,6 +136,8 @@ class KeyloggerDetectorAgent:
             self.api_scan_thread.join(timeout=5)
         if self.persistence_scan_thread:
             self.persistence_scan_thread.join(timeout=5)
+        if self.hook_scan_thread:
+            self.hook_scan_thread.join(timeout=5)
         
         security_logger.log_system_event("AGENT", "Agent de surveillance arrêté", "INFO")
         self._notify_gui("AGENT_STOPPED", {"message": "Agent arrêté"})
@@ -192,12 +203,35 @@ class KeyloggerDetectorAgent:
                 self._notify_gui("ERROR", {"message": error_msg})
                 time.sleep(self.persistence_scan_interval)
     
+    def _hook_scan_loop(self):
+        """Boucle de scan des hooks Windows"""
+        while self.running:
+            try:
+                scan_results = self._perform_hook_scan()
+                
+                # Notifier la GUI des résultats de hooks
+                self._notify_gui("HOOK_SCAN_COMPLETE", {
+                    "total_hooks": scan_results.get('total_hooks', 0),
+                    "suspicious_hooks": scan_results.get('suspicious_hooks', 0),
+                    "timestamp": time.time()
+                })
+                
+                time.sleep(self.hook_scan_interval)
+            except Exception as e:
+                error_msg = f"Erreur dans le scan de hooks: {e}"
+                security_logger.log_system_event("ERROR", error_msg, "ERROR")
+                self._notify_gui("ERROR", {"message": error_msg})
+                time.sleep(self.hook_scan_interval)
+    
     def _perform_main_scan(self):
         """Effectue un scan principal"""
         self.stats['total_scans'] += 1
         
         # Vérifier les alertes
         self.rules_engine.check_alerts()
+        
+        # Vérifier les patterns comportementaux suspects
+        self._check_behavioral_patterns()
         
         # Nettoyer les anciens processus
         self.rules_engine.cleanup_old_processes()
@@ -208,6 +242,47 @@ class KeyloggerDetectorAgent:
         # Log du résumé périodique
         if self.stats['total_scans'] % 10 == 0:  # Toutes les 10 scans
             self._log_summary()
+    
+    def _check_behavioral_patterns(self):
+        """Vérifie les patterns comportementaux suspects"""
+        try:
+            suspicious_patterns = self.behavioral_analyzer.get_suspicious_patterns()
+            
+            for pattern in suspicious_patterns:
+                # Créer une alerte pour les patterns critiques
+                if pattern['severity'] in ['HIGH', 'CRITICAL']:
+                    alert = self.alert_manager.create_keylogger_alert(
+                        pattern['process_name'],
+                        pattern['process_pid'],
+                        pattern.get('score', 0),
+                        {
+                            'type': 'BEHAVIORAL_PATTERN',
+                            'pattern_type': pattern['pattern_type'],
+                            'description': pattern['description'],
+                            'evidence': pattern['evidence']
+                        }
+                    )
+                    
+                    security_logger.log_alert(
+                        alert.alert_type,
+                        alert.title,
+                        alert.severity.name,
+                        alert.process_name,
+                        alert.process_pid
+                    )
+                    
+                    self._notify_gui("NEW_ALERT", {
+                        "alert_id": alert.alert_id,
+                        "alert_type": alert.alert_type,
+                        "severity": alert.severity.name,
+                        "process_name": alert.process_name,
+                        "process_pid": alert.process_pid,
+                        "title": alert.title,
+                        "description": alert.description,
+                        "timestamp": alert.timestamp
+                    })
+        except Exception as e:
+            security_logger.log_system_event("ERROR", f"Erreur lors de la vérification des patterns: {e}", "ERROR")
     
     def _perform_api_scan(self) -> Dict[str, Any]:
         """Effectue un scan des API pour tous les processus"""
@@ -238,6 +313,16 @@ class KeyloggerDetectorAgent:
                     # Créer un événement pour le moteur de règles
                     event = DetectionEvent('api_scan', api_results)
                     self.rules_engine.process_event(event)
+                    
+                    # Ajouter un événement comportemental
+                    if api_results.get('suspicious_apis'):
+                        behavioral_event = BehavioralEvent(
+                            'api_call',
+                            process_info.pid,
+                            process_info.name,
+                            {'apis': [api['name'] for api in api_results['suspicious_apis']]}
+                        )
+                        self.behavioral_analyzer.add_event(behavioral_event)
                     
                     # Log si des API suspectes sont détectées
                     if api_results.get('suspicious_apis'):
@@ -285,6 +370,48 @@ class KeyloggerDetectorAgent:
                     
         except Exception as e:
             security_logger.log_system_event("ERROR", f"Erreur lors du scan de persistance: {e}", "ERROR")
+        
+        return scan_results
+    
+    def _perform_hook_scan(self) -> Dict[str, Any]:
+        """Effectue un scan des hooks Windows"""
+        scan_results = {
+            'total_hooks': 0,
+            'suspicious_hooks': 0,
+            'hooks': []
+        }
+        
+        try:
+            hooks = self.hook_monitor.enumerate_hooks()
+            scan_results['total_hooks'] = len(hooks)
+            
+            suspicious_hooks = self.hook_monitor.get_suspicious_hooks()
+            scan_results['suspicious_hooks'] = len(suspicious_hooks)
+            scan_results['hooks'] = [hook.to_dict() for hook in hooks]
+            
+            # Créer des événements pour les hooks suspects
+            for hook in suspicious_hooks:
+                event = DetectionEvent('hook_installed', hook.to_dict())
+                self.rules_engine.process_event(event)
+                
+                # Ajouter un événement comportemental
+                behavioral_event = BehavioralEvent(
+                    'hook_installed',
+                    hook.process_id,
+                    hook.process_name,
+                    {'hook_type': hook.get_hook_type_name()}
+                )
+                self.behavioral_analyzer.add_event(behavioral_event)
+                
+                # Log la détection
+                security_logger.log_system_event(
+                    "HOOK",
+                    f"Hook suspect détecté: {hook.get_hook_type_name()} dans {hook.process_name} (PID: {hook.process_id})",
+                    "WARNING"
+                )
+        
+        except Exception as e:
+            security_logger.log_system_event("ERROR", f"Erreur lors du scan de hooks: {e}", "ERROR")
         
         return scan_results
     
@@ -352,6 +479,16 @@ class KeyloggerDetectorAgent:
             event = DetectionEvent('file_activity', data)
             self.rules_engine.process_event(event)
             
+            # Ajouter un événement comportemental
+            if data.activity_type in ['write', 'created']:
+                behavioral_event = BehavioralEvent(
+                    'file_write',
+                    data.process_pid,
+                    data.process_name,
+                    {'file_path': data.file_path, 'activity_type': data.activity_type}
+                )
+                self.behavioral_analyzer.add_event(behavioral_event)
+            
             # Log l'activité
             security_logger.log_file_activity(
                 data.file_path,
@@ -374,8 +511,16 @@ class KeyloggerDetectorAgent:
             event = DetectionEvent('network_connection', data)
             self.rules_engine.process_event(event)
             
-            # Log l'activité
+            # Ajouter un événement comportemental
             if data.raddr:
+                behavioral_event = BehavioralEvent(
+                    'network_send',
+                    data.pid,
+                    data.process_name,
+                    {'remote_address': f"{data.raddr.ip}:{data.raddr.port}"}
+                )
+                self.behavioral_analyzer.add_event(behavioral_event)
+                
                 security_logger.log_network_activity(
                     "NEW_CONNECTION",
                     f"{data.raddr.ip}:{data.raddr.port}",

@@ -8,6 +8,13 @@ from ctypes import wintypes
 from typing import Dict, List, Set, Optional
 import os
 
+# Essayer d'importer pefile, utiliser fallback si non disponible
+try:
+    import pefile
+    PEFILE_AVAILABLE = True
+except ImportError:
+    PEFILE_AVAILABLE = False
+
 
 class APIDetector:
     """Détecteur d'API suspectes dans les processus"""
@@ -31,6 +38,14 @@ class APIDetector:
             'TranslateMessage': 5,
             'DispatchMessage': 5
         }
+        
+        # Modules Python suspects (pour détecter pynput, etc.)
+        self.suspicious_python_modules = [
+            'pynput',
+            'keyboard',
+            'pyhook',
+            'pyautogui'
+        ]
         
         # APIs de hook spécifiques
         self.hook_apis = {
@@ -57,11 +72,21 @@ class APIDetector:
             'process_pid': process.pid,
             'suspicious_apis': [],
             'hook_apis': [],
+            'suspicious_python_modules': [],
             'total_score': 0,
             'risk_level': 'LOW'
         }
         
         try:
+            # Vérifier si c'est un processus Python
+            process_name_lower = process.name().lower()
+            if 'python' in process_name_lower:
+                # Vérifier les modules Python chargés
+                python_modules = self._check_python_modules(process)
+                if python_modules:
+                    result['suspicious_python_modules'] = python_modules
+                    result['total_score'] += len(python_modules) * 15  # +15 points par module suspect
+            
             # Obtenir les modules chargés
             modules = self._get_process_modules(process)
             
@@ -80,20 +105,88 @@ class APIDetector:
         
         return result
     
+    def _check_python_modules(self, process: psutil.Process) -> List[str]:
+        """Vérifie si un processus Python utilise des modules suspects"""
+        suspicious_found = []
+        
+        try:
+            # Vérifier la ligne de commande pour les imports
+            cmdline = ' '.join(process.cmdline())
+            cmdline_lower = cmdline.lower()
+            
+            for module in self.suspicious_python_modules:
+                if module in cmdline_lower:
+                    suspicious_found.append(module)
+            
+            # Vérifier les fichiers ouverts pour détecter pynput
+            try:
+                open_files = process.open_files()
+                for file_info in open_files:
+                    file_path_lower = file_info.path.lower()
+                    for module in self.suspicious_python_modules:
+                        if module in file_path_lower and module not in suspicious_found:
+                            suspicious_found.append(module)
+            except (psutil.AccessDenied, AttributeError):
+                pass
+                
+        except Exception:
+            pass
+        
+        return suspicious_found
+    
     def _get_process_modules(self, process: psutil.Process) -> List[str]:
         """Récupère la liste des modules chargés par un processus"""
         modules = []
         
         try:
-            # Utiliser memory_maps pour obtenir les modules
-            if hasattr(process, 'memory_maps'):
-                for mmap in process.memory_maps():
-                    if mmap.path and os.path.exists(mmap.path):
-                        modules.append(mmap.path)
+            # Ajouter l'exécutable principal en premier
+            if hasattr(process, 'exe'):
+                try:
+                    exe_path = process.exe()
+                    if exe_path and os.path.exists(exe_path):
+                        modules.append(exe_path)
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
             
-            # Ajouter l'exécutable principal
-            if hasattr(process, 'exe') and process.exe():
-                modules.append(process.exe())
+            # Utiliser memory_maps pour obtenir les modules chargés
+            if hasattr(process, 'memory_maps'):
+                try:
+                    for mmap in process.memory_maps():
+                        if mmap.path and os.path.exists(mmap.path):
+                            # Filtrer seulement les fichiers PE
+                            if self._is_pe_file(mmap.path):
+                                modules.append(mmap.path)
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    pass
+            
+            # Sur Windows, essayer d'obtenir les DLL chargées via pywin32
+            try:
+                import win32api
+                import win32process
+                import win32con
+                
+                # Obtenir les handles des modules
+                try:
+                    hProcess = win32api.OpenProcess(
+                        win32con.PROCESS_QUERY_INFORMATION | win32con.PROCESS_VM_READ,
+                        False, process.pid
+                    )
+                    
+                    modules_win32 = win32process.EnumProcessModules(hProcess)
+                    for module_handle in modules_win32:
+                        try:
+                            module_path = win32process.GetModuleFileNameEx(hProcess, module_handle)
+                            if os.path.exists(module_path) and self._is_pe_file(module_path):
+                                modules.append(module_path)
+                        except:
+                            continue
+                    
+                    win32api.CloseHandle(hProcess)
+                except:
+                    pass
+            except ImportError:
+                # pywin32 non disponible, continuer sans
+                pass
                 
         except Exception as e:
             print(f"[APIDetector] Erreur lors de la récupération des modules: {e}")
@@ -103,6 +196,7 @@ class APIDetector:
     def _analyze_module(self, module_path: str) -> Dict[str, any]:
         """
         Analyse un module pour détecter l'utilisation d'API suspectes
+        Utilise l'analyse PE (IAT/EAT) au lieu de la recherche de chaînes
         
         Args:
             module_path: Chemin vers le module à analyser
@@ -117,32 +211,139 @@ class APIDetector:
         }
         
         try:
-            # Lire le contenu du fichier
+            # Vérifier si c'est un fichier PE
+            if not self._is_pe_file(module_path):
+                return result
+            
+            # Utiliser l'analyse PE si disponible
+            if PEFILE_AVAILABLE:
+                pe_result = self._analyze_pe_imports(module_path)
+                result['suspicious_apis'].extend(pe_result['suspicious_apis'])
+                result['hook_apis'].extend(pe_result['hook_apis'])
+                result['score'] += pe_result['score']
+            else:
+                # Fallback: recherche de chaînes (moins fiable mais fonctionne)
+                result = self._analyze_module_fallback(module_path)
+            
+        except (FileNotFoundError, PermissionError, OSError, Exception) as e:
+            # Module non accessible ou erreur d'analyse, ignorer
+            pass
+        
+        return result
+    
+    def _is_pe_file(self, file_path: str) -> bool:
+        """Vérifie si un fichier est un exécutable PE"""
+        try:
+            with open(file_path, 'rb') as f:
+                header = f.read(2)
+                return header == b'MZ'  # Signature PE
+        except:
+            return False
+    
+    def _analyze_pe_imports(self, module_path: str) -> Dict[str, any]:
+        """
+        Analyse la table d'import PE (IAT) pour détecter les APIs suspectes
+        C'est la méthode correcte pour détecter les APIs importées
+        """
+        result = {
+            'suspicious_apis': [],
+            'hook_apis': [],
+            'score': 0
+        }
+        
+        try:
+            pe = pefile.PE(module_path)
+            
+            # Analyser les imports
+            if hasattr(pe, 'DIRECTORY_ENTRY_IMPORT'):
+                for entry in pe.DIRECTORY_ENTRY_IMPORT:
+                    dll_name = entry.dll.decode('utf-8', errors='ignore')
+                    
+                    for imp in entry.imports:
+                        if imp.name:
+                            api_name = imp.name.decode('utf-8', errors='ignore')
+                            
+                            # Vérifier si c'est une API suspecte
+                            if api_name in self.suspicious_apis:
+                                score = self.suspicious_apis[api_name]
+                                result['suspicious_apis'].append({
+                                    'name': api_name,
+                                    'dll': dll_name,
+                                    'score': score,
+                                    'module': module_path
+                                })
+                                result['score'] += score
+                            
+                            # Détecter les hooks clavier/souris
+                            if api_name in ['SetWindowsHookEx', 'SetWindowsHookExA', 'SetWindowsHookExW']:
+                                result['hook_apis'].append({
+                                    'type': 'HOOK_API',
+                                    'api': api_name,
+                                    'dll': dll_name,
+                                    'module': module_path
+                                })
+                                result['score'] += 15
+            
+            # Analyser les exports (EAT) pour les DLL
+            if hasattr(pe, 'DIRECTORY_ENTRY_EXPORT'):
+                for exp in pe.DIRECTORY_ENTRY_EXPORT.symbols:
+                    if exp.name:
+                        exp_name = exp.name.decode('utf-8', errors='ignore')
+                        if exp_name in self.suspicious_apis:
+                            result['suspicious_apis'].append({
+                                'name': exp_name,
+                                'dll': os.path.basename(module_path),
+                                'score': self.suspicious_apis[exp_name],
+                                'module': module_path,
+                                'type': 'export'
+                            })
+                            result['score'] += self.suspicious_apis[exp_name]
+            
+            pe.close()
+            
+        except (pefile.PEFormatError, Exception) as e:
+            # Fichier PE invalide ou erreur, utiliser fallback
+            pass
+        
+        return result
+    
+    def _analyze_module_fallback(self, module_path: str) -> Dict[str, any]:
+        """
+        Méthode de fallback: recherche de chaînes (moins fiable)
+        Utilisée seulement si pefile n'est pas disponible
+        """
+        result = {
+            'suspicious_apis': [],
+            'hook_apis': [],
+            'score': 0
+        }
+        
+        try:
+            # Lire seulement les premiers 1MB pour éviter les gros fichiers
             with open(module_path, 'rb') as f:
-                content = f.read()
+                content = f.read(1024 * 1024)  # 1MB max
             
-            # Rechercher les APIs suspectes
+            # Rechercher les APIs suspectes (moins fiable mais fonctionne)
             for api_name, score in self.suspicious_apis.items():
-                if api_name.encode() in content:
-                    result['suspicious_apis'].append({
-                        'name': api_name,
-                        'score': score,
-                        'module': module_path
-                    })
-                    result['score'] += score
+                # Rechercher avec différentes variations
+                patterns = [
+                    api_name.encode(),
+                    api_name.lower().encode(),
+                    api_name.upper().encode()
+                ]
+                
+                for pattern in patterns:
+                    if pattern in content:
+                        result['suspicious_apis'].append({
+                            'name': api_name,
+                            'score': score,
+                            'module': module_path,
+                            'method': 'string_search'  # Indique que c'est moins fiable
+                        })
+                        result['score'] += score
+                        break  # Éviter les doublons
             
-            # Rechercher les types de hooks
-            for hook_type, hook_id in self.hook_apis.items():
-                if str(hook_id).encode() in content:
-                    result['hook_apis'].append({
-                        'type': hook_type,
-                        'id': hook_id,
-                        'module': module_path
-                    })
-                    result['score'] += 5  # Score bonus pour les hooks
-            
-        except (FileNotFoundError, PermissionError, OSError) as e:
-            # Module non accessible, ignorer
+        except (FileNotFoundError, PermissionError, OSError):
             pass
         
         return result

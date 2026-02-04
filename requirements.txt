@@ -1,8 +1,9 @@
 psutil==5.9.6 # hadi elle aide a surveiller les processus li rahom en cours d'exécution wla recuperer leurs informations et les analyser 
 
 
-pywin32==306 #Manipuler le registre Windows.Gérer les fenêtres et services Windows
+pywin32>=306 #Manipuler le registre Windows.Gérer les fenêtres et services Windows
             #Automatiser certaines tâches spécifiques au système Windows.
+            #Version 311 disponible, on utilise >=306 pour compatibilité
 tkinter-tooltip==2.0.0 #hadi ida ma3ambalkch ghir quitti l projet 
 
 
@@ -15,3 +16,7 @@ watchdog==3.0.0 #bch tu surveille les fichier en temps reel (hna on va l'utilise
 
 
 requests==2.31.0 # pour faire des requêtes HTTP très facilement
+
+pefile>=2023.2.7 # Analyse des fichiers PE (Portable Executable) pour détecter les APIs importées via IAT/EAT
+                 # Remplace la recherche de chaînes par une analyse correcte des tables d'import
+                 # Version 2024.8.26 installée

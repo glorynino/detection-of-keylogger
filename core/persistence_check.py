@@ -280,8 +280,8 @@ class PersistenceChecker:
     
     def _is_suspicious_service(self, service: Dict) -> bool:
         """Détermine si un service est suspect"""
-        name = service.get('name', '').lower()
-        binary_path = service.get('binary_path', '').lower()
+        name = str(service.get('name', '')).lower()
+        binary_path = str(service.get('binary_path', '')).lower()
         
         # Noms suspects
         suspicious_names = ['keylog', 'logger', 'spy', 'monitor', 'hook']
@@ -296,8 +296,8 @@ class PersistenceChecker:
     
     def _is_suspicious_task(self, task: Dict) -> bool:
         """Détermine si une tâche planifiée est suspecte"""
-        name = task.get('name', '').lower()
-        command = task.get('command', '').lower()
+        name = str(task.get('name', '')).lower()
+        command = str(task.get('command', '')).lower()
         
         # Noms suspects
         suspicious_names = ['keylog', 'logger', 'spy', 'monitor', 'hook']
@@ -314,8 +314,8 @@ class PersistenceChecker:
         """Calcule le score de risque pour un service"""
         risk = 0
         
-        name = service.get('name', '').lower()
-        binary_path = service.get('binary_path', '').lower()
+        name = str(service.get('name', '')).lower()
+        binary_path = str(service.get('binary_path', '')).lower()
         
         # Noms suspects
         if any(sus in name for sus in ['keylog', 'logger', 'spy']):
@@ -331,8 +331,8 @@ class PersistenceChecker:
         """Calcule le score de risque pour une tâche"""
         risk = 0
         
-        name = task.get('name', '').lower()
-        command = task.get('command', '').lower()
+        name = str(task.get('name', '')).lower()
+        command = str(task.get('command', '')).lower()
         
         # Noms suspects
         if any(sus in name for sus in ['keylog', 'logger', 'spy']):

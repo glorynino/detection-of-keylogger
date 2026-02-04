@@ -174,6 +174,15 @@ class ProcessMonitor:
         if any(name in proc.name.lower() for name in suspicious_names):
             return True
         
+        # Processus Python avec comportement suspect
+        if proc.name.lower() in ['python.exe', 'pythonw.exe', 'python3.exe', 'python3.13.exe']:
+            # Vérifier si le script contient des mots-clés suspects
+            cmdline_str = ' '.join(proc.cmdline) if proc.cmdline else ''
+            cmdline_lower = cmdline_str.lower()
+            python_keylogger_keywords = ['pynput', 'keyboard', 'listener', 'keylog', 'listen-to-key']
+            if any(keyword in cmdline_lower for keyword in python_keylogger_keywords):
+                return True
+        
         # Processus dans des dossiers temporaires
         temp_paths = ['temp', 'tmp', 'appdata', 'localappdata']
         if any(path in proc.exe.lower() for path in temp_paths):
