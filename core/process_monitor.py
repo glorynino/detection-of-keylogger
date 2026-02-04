@@ -189,8 +189,9 @@ class ProcessMonitor:
             return True
         
         # Processus avec des arguments suspects
+        cmdline_str = proc.cmdline if isinstance(proc.cmdline, str) else ' '.join(proc.cmdline) if proc.cmdline else ''
         suspicious_args = ['-k', '--key', '--log', '--hook']
-        if any(arg in proc.cmdline.lower() for arg in suspicious_args):
+        if any(arg in cmdline_str.lower() for arg in suspicious_args):
             return True
         
         return False

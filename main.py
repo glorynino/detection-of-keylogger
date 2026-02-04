@@ -103,9 +103,10 @@ def signal_handler(signum, frame):
 # ═══════════════════════════════════════════════════════════════════════════
 
 def run_console_mode():
-    """Lance le mode console avec interface améliorée"""
+    """Lance le mode console avec interface améliorée - UNIQUEMENT CRITICAL/HIGH"""
     print(BANNER)
     print_header("Mode Console - Surveillance en Temps Réel")
+    print_status("⚠ Mode filtré: Affichage UNIQUEMENT des menaces CRITICAL et HIGH", "WARNING")
     
     # Créer l'agent
     print_status("Initialisation de l'agent de détection...", "INFO")
@@ -124,6 +125,8 @@ def run_console_mode():
         
         # Boucle principale
         scan_count = 0
+        last_threats_displayed = set()  # Pour éviter les doublons
+        
         while True:
             time.sleep(5)
             scan_count += 1
@@ -140,14 +143,57 @@ def run_console_mode():
                     print(f"\n┌─ Rapport de Surveillance [{datetime.now().strftime('%H:%M:%S')}]")
                     print_info("Temps actif", f"{hours:02d}h {minutes:02d}m {seconds:02d}s")
                     print_info("Scans effectués", status['stats']['total_scans'])
-                    print_info("Alertes générées", status['stats']['alerts_generated'])
+                    
+                    # Obtenir UNIQUEMENT les alertes CRITICAL et HIGH
+                    from alerts.alert_manager import AlertSeverity
+                    alert_manager = agent.get_alert_manager()
+                    all_alerts = alert_manager.get_alerts(resolved=False)
+                    critical_alerts = [a for a in all_alerts if a.severity == AlertSeverity.CRITICAL]
+                    high_alerts = [a for a in all_alerts if a.severity == AlertSeverity.HIGH]
+                    
+                    # Obtenir UNIQUEMENT les processus CRITICAL et HIGH
+                    rules_engine = agent.get_rules_engine()
+                    all_suspicious = rules_engine.get_suspicious_processes()
+                    critical_processes = [p for p in all_suspicious if p.risk_level == 'CRITICAL']
+                    high_processes = [p for p in all_suspicious if p.risk_level == 'HIGH']
+                    
+                    total_threats = len(critical_alerts) + len(high_alerts) + len(critical_processes) + len(high_processes)
+                    
+                    print_info("🔴 Menaces CRITICAL", len(critical_alerts) + len(critical_processes))
+                    print_info("⚠ Menaces HIGH", len(high_alerts) + len(high_processes))
                     
                     # Afficher les menaces si présentes
-                    if status['stats']['alerts_generated'] > 0:
-                        print_info("⚠ MENACES DÉTECTÉES", 
-                                 f"{status['stats']['alerts_generated']} alerte(s)", 0)
+                    if total_threats > 0:
+                        print_info("⚠ MENACES DÉTECTÉES", f"{total_threats} menace(s) critique(s)", 0)
+                        
+                        # Afficher les alertes CRITICAL
+                        if critical_alerts:
+                            print("\n  🔴 ALERTES CRITICAL:")
+                            for alert in sorted(critical_alerts, key=lambda x: x.timestamp, reverse=True)[:5]:
+                                time_str = datetime.fromtimestamp(alert.timestamp).strftime("%H:%M:%S")
+                                print(f"     ✗ [{time_str}] {alert.process_name} (PID: {alert.process_pid})")
+                                print(f"       → {alert.title}")
+                        
+                        # Afficher les processus CRITICAL
+                        if critical_processes:
+                            print("\n  🔴 PROCESSUS CRITICAL:")
+                            for proc in sorted(critical_processes, key=lambda x: x.total_score, reverse=True)[:5]:
+                                print(f"     ✗ {proc.process_name} (PID: {proc.process_pid}) - Score: {proc.total_score}")
+                        
+                        # Afficher les alertes HIGH
+                        if high_alerts:
+                            print("\n  ⚠ ALERTES HIGH:")
+                            for alert in sorted(high_alerts, key=lambda x: x.timestamp, reverse=True)[:3]:
+                                time_str = datetime.fromtimestamp(alert.timestamp).strftime("%H:%M:%S")
+                                print(f"     ⚠ [{time_str}] {alert.process_name} (PID: {alert.process_pid})")
+                        
+                        # Afficher les processus HIGH
+                        if high_processes:
+                            print("\n  ⚠ PROCESSUS HIGH:")
+                            for proc in sorted(high_processes, key=lambda x: x.total_score, reverse=True)[:3]:
+                                print(f"     ⚠ {proc.process_name} (PID: {proc.process_pid}) - Score: {proc.total_score}")
                     else:
-                        print_info("✓ Système sécurisé", "Aucune menace", 0)
+                        print_info("✓ Système sécurisé", "Aucune menace critique", 0)
                     
                     print("└" + "─" * 78)
             else:
@@ -200,9 +246,10 @@ def run_gui_mode():
 # ═══════════════════════════════════════════════════════════════════════════
 
 def run_test_mode():
-    """Lance le mode test avec rapport détaillé"""
+    """Lance le mode test avec rapport détaillé - UNIQUEMENT CRITICAL/HIGH"""
     print(BANNER)
     print_header("Mode Test - Analyse de 30 Secondes")
+    print_status("⚠ Mode filtré: Affichage UNIQUEMENT des menaces CRITICAL et HIGH", "WARNING")
     
     # Créer l'agent
     print_status("Initialisation de l'agent de test...", "INFO")
@@ -236,40 +283,74 @@ def run_test_mode():
         print_info("Alertes générées", summary['alerts_summary']['total_alerts'])
         print_info("Scans effectués", summary['agent_stats']['total_scans'])
         
-        # Afficher les processus suspects
-        if summary['suspicious_processes']:
-            print_section("Processus Suspects Détectés")
+        # FILTRER: Obtenir UNIQUEMENT les processus CRITICAL et HIGH
+        from alerts.alert_manager import AlertSeverity
+        alert_manager = agent.get_alert_manager()
+        all_alerts = alert_manager.get_alerts(resolved=False)
+        critical_alerts = [a for a in all_alerts if a.severity == AlertSeverity.CRITICAL]
+        high_alerts = [a for a in all_alerts if a.severity == AlertSeverity.HIGH]
+        
+        rules_engine = agent.get_rules_engine()
+        all_suspicious = rules_engine.get_suspicious_processes()
+        critical_processes = [p for p in all_suspicious if p.risk_level == 'CRITICAL']
+        high_processes = [p for p in all_suspicious if p.risk_level == 'HIGH']
+        
+        # TRIER par score décroissant
+        critical_processes_sorted = sorted(critical_processes, key=lambda x: x.total_score, reverse=True)
+        high_processes_sorted = sorted(high_processes, key=lambda x: x.total_score, reverse=True)
+        
+        # Afficher UNIQUEMENT les processus CRITICAL et HIGH
+        if critical_processes_sorted or high_processes_sorted:
+            print_section("🔴 MENACES CRITIQUES ET PROBABLES (CRITICAL/HIGH uniquement)")
             print_table_header()
             
-            for process in summary['suspicious_processes'][:10]:  # Limiter à 10
-                name = process['process_name'][:20]
-                pid = str(process['process_pid'])
-                score = str(process['total_score'])
-                risk = process['risk_level']
+            # Afficher d'abord les CRITICAL
+            for proc in critical_processes_sorted[:10]:
+                name = proc.process_name[:20]
+                pid = str(proc.process_pid)
+                score = str(proc.total_score)
+                risk = 'CRITICAL'
+                print_table_row(name, pid, score, risk)
+            
+            # Puis les HIGH
+            for proc in high_processes_sorted[:10]:
+                name = proc.process_name[:20]
+                pid = str(proc.process_pid)
+                score = str(proc.total_score)
+                risk = 'HIGH'
                 print_table_row(name, pid, score, risk)
             
             print_table_footer()
             
-            if len(summary['suspicious_processes']) > 10:
-                print(f"\n  ... et {len(summary['suspicious_processes']) - 10} autre(s)")
+            total_displayed = len(critical_processes_sorted[:10]) + len(high_processes_sorted[:10])
+            total_filtered = len(critical_processes_sorted) + len(high_processes_sorted)
+            if total_filtered > total_displayed:
+                print(f"\n  ... et {total_filtered - total_displayed} autre(s) menace(s) critique(s)")
         else:
-            print_status("Aucun processus suspect détecté", "SUCCESS")
+            print_status("✓ Aucune menace critique détectée", "SUCCESS")
         
-        # Afficher les alertes
-        if summary['alerts_summary']['total_alerts'] > 0:
-            print_section("Alertes de Sécurité")
-            for i, alert in enumerate(summary['alerts_summary']['recent_alerts'][:5], 1):
-                severity_symbol = {
-                    'CRITICAL': '✗',
-                    'HIGH': '⚠',
-                    'MEDIUM': '●',
-                    'LOW': '○'
-                }.get(alert['severity'], '○')
-                
-                print(f"  {i}. [{alert['severity']}] {severity_symbol} {alert['title']}")
+        # Afficher UNIQUEMENT les alertes CRITICAL et HIGH
+        if critical_alerts or high_alerts:
+            print_section("🔴 ALERTES CRITIQUES ET PROBABLES")
             
-            if summary['alerts_summary']['total_alerts'] > 5:
-                print(f"\n  ... et {summary['alerts_summary']['total_alerts'] - 5} autre(s) alerte(s)")
+            # Afficher d'abord les CRITICAL (triées par timestamp décroissant)
+            for i, alert in enumerate(sorted(critical_alerts, key=lambda x: x.timestamp, reverse=True)[:5], 1):
+                time_str = datetime.fromtimestamp(alert.timestamp).strftime("%H:%M:%S")
+                print(f"  {i}. [CRITICAL] ✗ [{time_str}] {alert.process_name} (PID: {alert.process_pid})")
+                print(f"     → {alert.title}")
+            
+            # Puis les HIGH
+            for i, alert in enumerate(sorted(high_alerts, key=lambda x: x.timestamp, reverse=True)[:3], len(critical_alerts[:5]) + 1):
+                time_str = datetime.fromtimestamp(alert.timestamp).strftime("%H:%M:%S")
+                print(f"  {i}. [HIGH] ⚠ [{time_str}] {alert.process_name} (PID: {alert.process_pid})")
+                print(f"     → {alert.title}")
+            
+            total_alerts = len(critical_alerts) + len(high_alerts)
+            displayed = min(5, len(critical_alerts)) + min(3, len(high_alerts))
+            if total_alerts > displayed:
+                print(f"\n  ... et {total_alerts - displayed} autre(s) alerte(s) critique(s)")
+        else:
+            print_status("✓ Aucune alerte critique", "SUCCESS")
         
         print("\n" + DOUBLE_SEPARATOR)
         print_status("Test terminé avec succès", "SUCCESS")

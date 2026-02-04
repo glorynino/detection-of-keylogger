@@ -12,6 +12,7 @@ from core.persistence_check import PersistenceChecker, PersistenceMethod
 from core.rules_engine import RulesEngine, DetectionEvent
 from core.hook_monitor import HookMonitor
 from core.behavioral_analyzer import BehavioralAnalyzer, BehavioralEvent
+from core.scan_cache import ScanCache
 from alerts.alert_manager import AlertManager, AlertSeverity
 from alerts.logger import security_logger
 from config.settings import MONITOR_CONFIG
@@ -31,6 +32,9 @@ class KeyloggerDetectorAgent:
         self.rules_engine = RulesEngine()
         self.alert_manager = AlertManager()
         
+        # Système de cache pour optimiser les scans
+        self.scan_cache = ScanCache(cache_ttl=300)  # Cache de 5 minutes
+        
         # État de l'agent
         self.running = False
         self.scan_thread = None
@@ -38,11 +42,11 @@ class KeyloggerDetectorAgent:
         self.persistence_scan_thread = None
         self.hook_scan_thread = None
         
-        # Configuration
+        # Configuration - OPTIMISÉ: Intervalles plus longs
         self.scan_interval = MONITOR_CONFIG['scan_interval']
-        self.api_scan_interval = 30  # secondes
-        self.persistence_scan_interval = 300  # 5 minutes
-        self.hook_scan_interval = 60  # 1 minute
+        self.api_scan_interval = 60  # 1 minute (au lieu de 30s)
+        self.persistence_scan_interval = 600  # 10 minutes (au lieu de 5)
+        self.hook_scan_interval = 120  # 2 minutes (au lieu de 1)
         
         # Statistiques
         self.stats = {
@@ -69,11 +73,25 @@ class KeyloggerDetectorAgent:
     
     def _notify_gui(self, event_type: str, data: Dict[str, Any]):
         """Notifie tous les callbacks GUI"""
-        for callback in self.gui_callbacks:
+        if not self.running:
+            return  # Ne pas notifier si l'agent est arrêté
+        
+        for callback in self.gui_callbacks[:]:  # Copie de la liste pour éviter les modifications pendant l'itération
             try:
                 callback(event_type, data)
+            except (AttributeError, RuntimeError) as e:
+                # Erreurs courantes lors de la fermeture de la fenêtre (TclError est une RuntimeError)
+                # Retirer le callback invalide
+                try:
+                    if callback in self.gui_callbacks:
+                        self.gui_callbacks.remove(callback)
+                except:
+                    pass
             except Exception as e:
-                print(f"Erreur callback GUI: {e}")
+                # Autres erreurs - juste logger (ignore les erreurs de fermeture)
+                error_str = str(e).lower()
+                if 'destroyed' not in error_str and 'invalid' not in error_str:
+                    print(f"Erreur callback GUI: {e}")
     
     def _setup_callbacks(self):
         """Configure les callbacks entre les composants"""
@@ -125,22 +143,41 @@ class KeyloggerDetectorAgent:
         
         self.running = False
         
+        # Vider les callbacks GUI pour éviter les erreurs après fermeture
+        try:
+            self._notify_gui("AGENT_STOPPED", {"message": "Agent arrêté"})
+        except:
+            pass
+        
         # Arrêter les composants
-        self.process_monitor.stop()
-        self.file_monitor.stop()
+        try:
+            self.process_monitor.stop()
+        except:
+            pass
+        
+        try:
+            self.file_monitor.stop()
+        except:
+            pass
         
         # Attendre que les threads se terminent
-        if self.scan_thread:
-            self.scan_thread.join(timeout=5)
-        if self.api_scan_thread:
-            self.api_scan_thread.join(timeout=5)
-        if self.persistence_scan_thread:
-            self.persistence_scan_thread.join(timeout=5)
-        if self.hook_scan_thread:
-            self.hook_scan_thread.join(timeout=5)
+        if self.scan_thread and self.scan_thread.is_alive():
+            self.scan_thread.join(timeout=2)
+        if self.api_scan_thread and self.api_scan_thread.is_alive():
+            self.api_scan_thread.join(timeout=2)
+        if self.persistence_scan_thread and self.persistence_scan_thread.is_alive():
+            self.persistence_scan_thread.join(timeout=2)
+        if self.hook_scan_thread and self.hook_scan_thread.is_alive():
+            self.hook_scan_thread.join(timeout=2)
         
-        security_logger.log_system_event("AGENT", "Agent de surveillance arrêté", "INFO")
-        self._notify_gui("AGENT_STOPPED", {"message": "Agent arrêté"})
+        # Vider les callbacks après l'arrêt
+        self.gui_callbacks.clear()
+        
+        try:
+            security_logger.log_system_event("AGENT", "Agent de surveillance arrêté", "INFO")
+        except:
+            pass
+        
         print("[Agent] Surveillance arrêtée")
     
     def _main_scan_loop(self):
@@ -285,56 +322,92 @@ class KeyloggerDetectorAgent:
             security_logger.log_system_event("ERROR", f"Erreur lors de la vérification des patterns: {e}", "ERROR")
     
     def _perform_api_scan(self) -> Dict[str, Any]:
-        """Effectue un scan des API pour tous les processus"""
+        """Effectue un scan des API - OPTIMISÉ avec cache"""
         scan_results = {
             'processes': [],
             'suspicious_processes': [],
-            'total_scanned': 0
+            'total_scanned': 0,
+            'cached': 0
         }
         
         try:
+            # Nettoyer le cache expiré
+            self.scan_cache.clear_expired()
+            
             processes = self.process_monitor.get_processes()
-            self.stats['processes_scanned'] += len(processes)
             scan_results['total_scanned'] = len(processes)
+            
+            # OPTIMISATION: Ne scanner QUE les processus suspects ou nouveaux
+            suspicious_processes = self.rules_engine.get_suspicious_processes()
+            suspicious_pids = {p.process_pid for p in suspicious_processes}
             
             for process_info in processes.values():
                 try:
-                    # Créer un objet psutil.Process pour l'API detector
-                    import psutil
-                    process = psutil.Process(process_info.pid)
+                    pid = process_info.pid
                     
-                    # Scanner les API
-                    api_results = self.api_detector.scan_process(process)
-                    api_results['pid'] = process_info.pid
-                    api_results['name'] = process_info.name
+                    # OPTIMISATION: Vérifier le cache d'abord
+                    cached_result = self.scan_cache.get_cached_result(pid)
+                    if cached_result:
+                        scan_results['cached'] += 1
+                        api_results = cached_result.copy()
+                        api_results['from_cache'] = True
+                    else:
+                        # Vérifier si le processus doit être scanné
+                        if not self.scan_cache.should_scan_process(pid, process_info):
+                            continue
+                        
+                        # OPTIMISATION: Scanner seulement les processus suspects ou Python
+                        process_name_lower = process_info.name.lower()
+                        is_python = 'python' in process_name_lower
+                        is_suspicious = pid in suspicious_pids
+                        
+                        if not (is_python or is_suspicious):
+                            continue  # Ignorer les processus normaux
+                        
+                        # Créer un objet psutil.Process pour l'API detector
+                        import psutil
+                        process = psutil.Process(pid)
+                        
+                        # Scanner les API
+                        api_results = self.api_detector.scan_process(process)
+                        api_results['pid'] = pid
+                        api_results['name'] = process_info.name
+                        api_results['from_cache'] = False
+                        
+                        # Mettre en cache le résultat
+                        self.scan_cache.cache_result(pid, api_results)
                     
                     scan_results['processes'].append(api_results)
                     
-                    # Créer un événement pour le moteur de règles
-                    event = DetectionEvent('api_scan', api_results)
-                    self.rules_engine.process_event(event)
-                    
-                    # Ajouter un événement comportemental
-                    if api_results.get('suspicious_apis'):
-                        behavioral_event = BehavioralEvent(
-                            'api_call',
-                            process_info.pid,
-                            process_info.name,
-                            {'apis': [api['name'] for api in api_results['suspicious_apis']]}
-                        )
-                        self.behavioral_analyzer.add_event(behavioral_event)
+                    # Créer un événement pour le moteur de règles (seulement si nouveau scan)
+                    if not api_results.get('from_cache', False):
+                        event = DetectionEvent('api_scan', api_results)
+                        self.rules_engine.process_event(event)
+                        
+                        # Ajouter un événement comportemental
+                        if api_results.get('suspicious_apis'):
+                            behavioral_event = BehavioralEvent(
+                                'api_call',
+                                pid,
+                                process_info.name,
+                                {'apis': [api['name'] for api in api_results['suspicious_apis']]}
+                            )
+                            self.behavioral_analyzer.add_event(behavioral_event)
                     
                     # Log si des API suspectes sont détectées
                     if api_results.get('suspicious_apis'):
-                        security_logger.log_api_usage(
-                            ', '.join([api['name'] for api in api_results['suspicious_apis']]),
-                            process_info.name,
-                            process_info.pid
-                        )
+                        if not api_results.get('from_cache', False):
+                            security_logger.log_api_usage(
+                                ', '.join([api['name'] for api in api_results['suspicious_apis']]),
+                                process_info.name,
+                                pid
+                            )
                         scan_results['suspicious_processes'].append(api_results)
                     
                 except Exception as e:
                     continue  # Ignorer les erreurs sur des processus individuels
+            
+            self.stats['processes_scanned'] += scan_results['total_scanned'] - scan_results['cached']
                     
         except Exception as e:
             security_logger.log_system_event("ERROR", f"Erreur lors du scan API: {e}", "ERROR")
@@ -436,41 +509,32 @@ class KeyloggerDetectorAgent:
             print(f"Erreur mise à jour données GUI: {e}")
     
     def _on_process_change(self, new_processes: List[ProcessInfo], terminated_processes: List[ProcessInfo]):
-        """Callback pour les changements de processus"""
+        """Callback pour les changements de processus - OPTIMISÉ"""
+        # OPTIMISATION: Ne traiter que les processus suspects
         for process in new_processes:
+            # Filtrer: ne traiter que les processus suspects
+            process_name_lower = process.name.lower()
+            suspicious_keywords = ['keylog', 'logger', 'spy', 'hook', 'monitor', 'python']
+            is_suspicious = any(keyword in process_name_lower for keyword in suspicious_keywords)
+            
+            if not is_suspicious:
+                continue  # Ignorer les processus normaux
+            
             # Créer un événement pour le moteur de règles
             event = DetectionEvent('new_process', process.to_dict())
             self.rules_engine.process_event(event)
             
-            # Log l'activité
+            # Log l'activité (seulement pour les suspects)
             security_logger.log_process_activity(
                 "NEW_PROCESS",
                 process.name,
                 process.pid,
                 f"Exe: {process.exe}"
             )
-            
-            # Notifier la GUI
-            self._notify_gui("NEW_PROCESS", {
-                "pid": process.pid,
-                "name": process.name,
-                "exe": process.exe,
-                "timestamp": time.time()
-            })
         
+        # Nettoyer le cache pour les processus terminés
         for process in terminated_processes:
-            security_logger.log_process_activity(
-                "TERMINATED_PROCESS",
-                process.name,
-                process.pid
-            )
-            
-            # Notifier la GUI
-            self._notify_gui("TERMINATED_PROCESS", {
-                "pid": process.pid,
-                "name": process.name,
-                "timestamp": time.time()
-            })
+            self.scan_cache.clear_process(process.pid)
     
     def _on_file_activity(self, event_type: str, data):
         """Callback pour les activités de fichiers"""

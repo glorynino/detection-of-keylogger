@@ -120,6 +120,9 @@ class KeyloggerDetectorGUI:
 
     def _process_agent_update(self, event_type, data):
         """Traite les mises à jour de l'agent - FILTRAGE MAXIMAL pour performance"""
+        if not self._is_window_alive():
+            return
+        
         try:
             # Ignorer la plupart des événements pour performance
             if event_type in ["DATA_UPDATE"] and not self.monitoring:
@@ -148,6 +151,8 @@ class KeyloggerDetectorGUI:
             if handler:
                 handler(data)
                 
+        except (tk.TclError, RuntimeError, AttributeError):
+            pass  # Fenêtre détruite
         except Exception as e:
             print(f"Erreur traitement update: {e}")
 
@@ -635,6 +640,9 @@ class KeyloggerDetectorGUI:
     
     def refresh_threats(self):
         """Actualise la liste des menaces - UNIQUEMENT CRITICAL - AFFICHAGE DIRECT"""
+        if not self._is_window_alive():
+            return
+        
         if not self.agent or not self.monitoring:
             return
         
@@ -686,8 +694,11 @@ class KeyloggerDetectorGUI:
             if critical_alerts or critical_processes:
                 self.log_activity("THREATS", f"🔴 {len(critical_alerts)} alertes critiques, {len(critical_processes)} processus critiques", "ERROR")
             
+        except (tk.TclError, RuntimeError, AttributeError):
+            pass  # Fenêtre détruite
         except Exception as e:
-            self.log_activity("ERROR", f"Erreur actualisation menaces: {e}", "ERROR")
+            if self._is_window_alive():
+                self.log_activity("ERROR", f"Erreur actualisation menaces: {e}", "ERROR")
     
     def export_threats_json(self):
         """Exporte les menaces en JSON"""
@@ -848,9 +859,15 @@ class KeyloggerDetectorGUI:
     
     def _update_clock(self):
         """Met à jour l'horloge"""
+        if not self._is_window_alive():
+            return
+        
         if self.animation_running:
-            self.clock_label.config(text=datetime.now().strftime("%H:%M:%S"))
-            self.root.after(1000, self._update_clock)
+            try:
+                self.clock_label.config(text=datetime.now().strftime("%H:%M:%S"))
+                self.root.after(1000, self._update_clock)
+            except (tk.TclError, RuntimeError, AttributeError):
+                pass  # Fenêtre détruite
     
     def _start_animations(self):
         """Démarre les animations"""
@@ -858,10 +875,16 @@ class KeyloggerDetectorGUI:
     
     def _animate_status_circle(self):
         """Anime le cercle de statut - DÉSACTIVÉ pour performance"""
+        if not self._is_window_alive():
+            return
+        
         # Animation désactivée pour améliorer les performances
         # Le cercle reste fixe selon l'état (blanc si actif, gris si arrêté)
         if self.animation_running:
-            self.root.after(5000, self._animate_status_circle)  # Vérifier toutes les 5 secondes seulement
+            try:
+                self.root.after(5000, self._animate_status_circle)  # Vérifier toutes les 5 secondes seulement
+            except (tk.TclError, RuntimeError, AttributeError):
+                pass  # Fenêtre détruite
     
     def _flash_alert_indicator(self):
         """Flash l'indicateur d'alerte"""
@@ -875,6 +898,9 @@ class KeyloggerDetectorGUI:
             threat_update_counter = 0
             while self.animation_running:
                 try:
+                    if not self._is_window_alive():
+                        break  # Sortir si la fenêtre est détruite
+                    
                     # Mise à jour beaucoup moins fréquente (10 secondes)
                     if self.monitoring:
                         self.update_interface()
@@ -882,10 +908,15 @@ class KeyloggerDetectorGUI:
                         # Actualiser les menaces toutes les 20 secondes (affichage direct)
                         threat_update_counter += 1
                         if threat_update_counter >= 2:  # 2 * 10 = 20 secondes
-                            if hasattr(self, 'threats_tree'):
-                                self.root.after(0, self.refresh_threats)
+                            if hasattr(self, 'threats_tree') and self._is_window_alive():
+                                try:
+                                    self.root.after(0, self.refresh_threats)
+                                except (tk.TclError, RuntimeError):
+                                    break  # Fenêtre détruite
                             threat_update_counter = 0
                     time.sleep(10)  # Augmenté à 10 secondes pour performance
+                except (tk.TclError, RuntimeError, AttributeError):
+                    break  # Fenêtre détruite, sortir
                 except Exception as e:
                     print(f"Erreur update loop: {e}")
                     time.sleep(20)
@@ -893,18 +924,31 @@ class KeyloggerDetectorGUI:
         self.update_thread = threading.Thread(target=update_loop, daemon=True)
         self.update_thread.start()
     
+    def _is_window_alive(self):
+        """Vérifie si la fenêtre existe encore"""
+        try:
+            return self.root.winfo_exists()
+        except:
+            return False
+    
     def update_status(self, message, status_type="info"):
         """Met à jour le statut avec style"""
-        self.status_label.config(text=message)
+        if not self._is_window_alive():
+            return
         
-        colors = {
-            'ready': COLORS['fg_gray'],
-            'active': COLORS['fg_white'],
-            'stopped': COLORS['fg_dim'],
-            'error': COLORS['error']
-        }
-        
-        self.status_label.config(fg=colors.get(status_type, COLORS['fg_gray']))
+        try:
+            self.status_label.config(text=message)
+            
+            colors = {
+                'ready': COLORS['fg_gray'],
+                'active': COLORS['fg_white'],
+                'stopped': COLORS['fg_dim'],
+                'error': COLORS['error']
+            }
+            
+            self.status_label.config(fg=colors.get(status_type, COLORS['fg_gray']))
+        except (tk.TclError, RuntimeError, AttributeError):
+            pass  # Fenêtre détruite
     
     def _update_stats(self, status):
         """Met à jour les statistiques"""
@@ -976,6 +1020,9 @@ class KeyloggerDetectorGUI:
         """Lance un scan rapide"""
         def scan_thread():
             try:
+                if not self._is_window_alive():
+                    return
+                
                 self.update_status("Scan rapide en cours...", "active")
                 self.log_activity("SCAN", "Démarrage du scan rapide", "INFO")
                 
@@ -984,12 +1031,18 @@ class KeyloggerDetectorGUI:
                 else:
                     time.sleep(2)
                 
+                if not self._is_window_alive():
+                    return
+                
                 self.update_status("Scan rapide terminé", "ready")
                 self.log_activity("SCAN", "✓ Scan rapide terminé", "SUCCESS")
                 
+            except (tk.TclError, RuntimeError, AttributeError):
+                pass  # Fenêtre détruite
             except Exception as e:
-                self.update_status("Erreur lors du scan", "error")
-                self.log_activity("ERROR", f"Échec scan: {e}", "ERROR")
+                if self._is_window_alive():
+                    self.update_status("Erreur lors du scan", "error")
+                    self.log_activity("ERROR", f"Échec scan: {e}", "ERROR")
         
         threading.Thread(target=scan_thread, daemon=True).start()
     
@@ -1054,43 +1107,54 @@ STATISTIQUES GÉNÉRALES:
     
     def update_interface(self):
         """Met à jour l'interface"""
+        if not self._is_window_alive():
+            return
+        
         try:
             if self.monitoring and self.agent:
                 status = self.agent.get_status()
                 if status:
                     self._update_stats(status)
                     
+        except (tk.TclError, RuntimeError, AttributeError):
+            pass  # Fenêtre détruite
         except Exception as e:
             print(f"Erreur update interface: {e}")
     
     def log_activity(self, category, message, level="INFO"):
         """Ajoute un log d'activité - UNIQUEMENT CRITICAL/ERROR"""
+        if not self._is_window_alive():
+            return
+        
         # Filtrer: ne logger que CRITICAL, ERROR, et quelques SYSTEM importants
         if level not in ["ERROR", "CRITICAL"] and category not in ["SYSTEM", "THREATS"]:
             return  # Ignorer les logs normaux pour performance
         
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        
-        icons = {
-            "SUCCESS": "✓",
-            "INFO": "●",
-            "WARNING": "⚠",
-            "ERROR": "✗",
-            "CRITICAL": "🔴"
-        }
-        
-        icon = icons.get(level, "●")
-        log_entry = f"[{timestamp}] [{category:^10}] {icon} {message}\n"
-        
-        # Limiter le nombre de lignes dans les logs (max 200 lignes pour performance)
-        self._limit_text_widget(self.activity_log, 200)
-        self.activity_log.insert(tk.END, log_entry)
-        self.activity_log.see(tk.END)
-        
-        # Limiter aussi les logs détaillés (max 300 lignes)
-        self._limit_text_widget(self.detailed_logs, 300)
-        self.detailed_logs.insert(tk.END, log_entry)
-        self.detailed_logs.see(tk.END)
+        try:
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            
+            icons = {
+                "SUCCESS": "✓",
+                "INFO": "●",
+                "WARNING": "⚠",
+                "ERROR": "✗",
+                "CRITICAL": "🔴"
+            }
+            
+            icon = icons.get(level, "●")
+            log_entry = f"[{timestamp}] [{category:^10}] {icon} {message}\n"
+            
+            # Limiter le nombre de lignes dans les logs (max 200 lignes pour performance)
+            self._limit_text_widget(self.activity_log, 200)
+            self.activity_log.insert(tk.END, log_entry)
+            self.activity_log.see(tk.END)
+            
+            # Limiter aussi les logs détaillés (max 300 lignes)
+            self._limit_text_widget(self.detailed_logs, 300)
+            self.detailed_logs.insert(tk.END, log_entry)
+            self.detailed_logs.see(tk.END)
+        except (tk.TclError, RuntimeError, AttributeError):
+            pass  # Fenêtre détruite
     
     def _limit_text_widget(self, widget, max_lines):
         """Limite le nombre de lignes dans un widget texte"""
@@ -1114,15 +1178,75 @@ STATISTIQUES GÉNÉRALES:
             self.log_activity("SYSTEM", "Logs actualisés", "INFO")
     
     def on_closing(self):
-        """Gestionnaire de fermeture"""
-        if self.monitoring:
-            if messagebox.askokcancel("Quitter", "La surveillance est active. Voulez-vous vraiment quitter?"):
-                self.animation_running = False
-                self.stop_monitoring()
-                self.root.destroy()
-        else:
+        """Gestionnaire de fermeture - NETTOYAGE COMPLET"""
+        try:
+            # Désactiver le gestionnaire pour éviter les appels multiples
+            self.root.protocol("WM_DELETE_WINDOW", lambda: None)
+            
+            # Arrêter IMMÉDIATEMENT les animations et la boucle de mise à jour
+            # Cela empêche les threads d'essayer d'accéder à la GUI
             self.animation_running = False
-            self.root.destroy()
+            self.monitoring = False
+            
+            # Demander confirmation si la surveillance était active
+            if hasattr(self, 'agent') and self.agent:
+                try:
+                    if not messagebox.askokcancel("Quitter", "La surveillance est active. Voulez-vous vraiment quitter?"):
+                        # Réactiver le gestionnaire si l'utilisateur annule
+                        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+                        self.animation_running = True
+                        self.monitoring = True
+                        return  # Annuler la fermeture
+                except:
+                    # Si messagebox échoue, continuer quand même
+                    pass
+            
+            # Arrêter proprement l'agent si actif
+            if hasattr(self, 'agent') and self.agent:
+                try:
+                    self.agent.stop()
+                    # Attendre un peu que l'agent s'arrête
+                    time.sleep(0.2)
+                except Exception as e:
+                    print(f"Erreur arrêt agent: {e}")
+                finally:
+                    self.agent = None
+            
+            # Attendre que le thread de mise à jour se termine
+            if hasattr(self, 'update_thread') and self.update_thread and self.update_thread.is_alive():
+                time.sleep(0.3)
+            
+            # Annuler tous les appels root.after() en cours en détruisant la fenêtre
+            # Cela annule automatiquement tous les callbacks en attente
+            
+            # Détruire la fenêtre proprement
+            try:
+                self.root.quit()  # Quitter la boucle principale (annule les root.after())
+            except:
+                pass
+            
+            try:
+                self.root.destroy()  # Détruire la fenêtre
+            except:
+                pass
+            
+        except Exception as e:
+            # En cas d'erreur, forcer la fermeture
+            print(f"Erreur lors de la fermeture: {e}")
+            self.animation_running = False
+            self.monitoring = False
+            try:
+                self.root.quit()
+            except:
+                pass
+            try:
+                self.root.destroy()
+            except:
+                pass
+            # Forcer la sortie si nécessaire
+            import sys
+            import os
+            os._exit(0)  # Force exit sans nettoyage
     
     def run(self):
         """Lance l'interface graphique"""
