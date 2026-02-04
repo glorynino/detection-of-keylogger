@@ -9,6 +9,7 @@ import threading
 import time
 import sys
 import os
+import json
 from datetime import datetime
 
 # Ajouter le chemin pour les imports
@@ -118,25 +119,27 @@ class KeyloggerDetectorGUI:
         self.root.after(0, self._process_agent_update, event_type, data)
 
     def _process_agent_update(self, event_type, data):
-        """Traite les mises à jour de l'agent dans le thread GUI (optimisé)"""
+        """Traite les mises à jour de l'agent - FILTRAGE MAXIMAL pour performance"""
         try:
-            # Filtrer les événements moins importants pour réduire la charge
+            # Ignorer la plupart des événements pour performance
             if event_type in ["DATA_UPDATE"] and not self.monitoring:
-                return  # Ignorer les updates si pas en surveillance
+                return
             
+            # IGNORER complètement les événements non critiques
+            ignored_events = [
+                "FILE_ACTIVITY", "NETWORK_ACTIVITY", "NEW_PROCESS", 
+                "TERMINATED_PROCESS", "SCAN_COMPLETE", "API_SCAN_COMPLETE",
+                "PERSISTENCE_SCAN_COMPLETE", "SUMMARY_UPDATE"
+            ]
+            if event_type in ignored_events:
+                return  # Ignorer pour performance
+            
+            # Traiter UNIQUEMENT les événements critiques
             handlers = {
                 "AGENT_STARTED": self._handle_agent_started,
                 "AGENT_STOPPED": self._handle_agent_stopped,
-                "SCAN_COMPLETE": self._handle_scan_complete,
-                "API_SCAN_COMPLETE": self._handle_api_scan_complete,
-                "PERSISTENCE_SCAN_COMPLETE": self._handle_persistence_scan_complete,
                 "DATA_UPDATE": self._handle_data_update,
-                "NEW_PROCESS": self._handle_new_process,
-                "TERMINATED_PROCESS": self._handle_terminated_process,
-                "FILE_ACTIVITY": self._handle_file_activity,
-                "NETWORK_ACTIVITY": self._handle_network_activity,
-                "NEW_ALERT": self._handle_new_alert,
-                "SUMMARY_UPDATE": self._handle_summary_update,
+                "NEW_ALERT": self._handle_new_alert,  # Seulement CRITICAL maintenant
                 "ERROR": self._handle_error,
                 "FORCED_SCAN": self._handle_forced_scan,
             }
@@ -219,8 +222,14 @@ class KeyloggerDetectorGUI:
         title = data.get("title", "Sans titre")
         process = data.get("process_name", "Inconnu")
         
-        self.log_activity("ALERT", f"🚨 [{severity}] {title} - {process}", "ERROR")
-        self._flash_alert_indicator()
+        # Log UNIQUEMENT les alertes CRITICAL
+        if severity == 'CRITICAL':
+            self.log_activity("ALERT", f"🔴 CRITICAL: {title} - {process}", "ERROR")
+            self._flash_alert_indicator()
+            
+            # Actualiser IMMÉDIATEMENT l'onglet des menaces pour affichage direct
+            if hasattr(self, 'threats_tree'):
+                self.root.after(0, self.refresh_threats)
 
     def _handle_summary_update(self, data):
         uptime = data.get("uptime", "0h 0m")
@@ -418,6 +427,7 @@ class KeyloggerDetectorGUI:
         
         # Onglets
         self._create_monitoring_tab(notebook)
+        self._create_threats_tab(notebook)
         self._create_stats_tab(notebook)
         self._create_logs_tab(notebook)
     
@@ -469,6 +479,246 @@ class KeyloggerDetectorGUI:
             wrap=tk.WORD
         )
         self.activity_log.pack(fill=tk.BOTH, expand=True)
+    
+    def _create_threats_tab(self, notebook):
+        """Crée l'onglet des menaces critiques - AFFICHAGE DIRECT"""
+        threats_frame = tk.Frame(notebook, bg=COLORS['bg_dark'])
+        notebook.add(threats_frame, text="  🔴 MENACES CRITIQUES  ")
+        
+        # Container principal
+        main_container = tk.Frame(threats_frame, bg=COLORS['bg_medium'])
+        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        main_container.configure(highlightbackground=COLORS['border'], 
+                               highlightthickness=1)
+        
+        # En-tête
+        header = tk.Frame(main_container, bg=COLORS['bg_light'])
+        header.pack(fill=tk.X)
+        
+        tk.Label(header, text="Menaces Critiques Uniquement",
+                font=('Segoe UI', 12, 'bold'),
+                bg=COLORS['bg_light'],
+                fg=COLORS['fg_white']).pack(side=tk.LEFT, padx=15, pady=10)
+        
+        # Boutons d'action
+        btn_frame = tk.Frame(header, bg=COLORS['bg_light'])
+        btn_frame.pack(side=tk.RIGHT, padx=10)
+        
+        for text, cmd in [("↻ Actualiser", self.refresh_threats), 
+                         ("📋 Exporter JSON", self.export_threats_json),
+                         ("✕ Effacer", self.clear_threats)]:
+            tk.Button(btn_frame, text=text, command=cmd,
+                     font=('Segoe UI', 9),
+                     bg=COLORS['bg_light'],
+                     fg=COLORS['fg_gray'],
+                     relief='flat',
+                     cursor='hand2').pack(side=tk.LEFT, padx=5)
+        
+        # Zone de contenu avec deux panneaux
+        content_frame = tk.Frame(main_container, bg=COLORS['bg_medium'])
+        content_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=(0, 15))
+        
+        # Panneau gauche: Liste des menaces (TreeView)
+        left_panel = tk.Frame(content_frame, bg=COLORS['bg_medium'])
+        left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+        
+        tk.Label(left_panel, text="Liste des Menaces Critiques",
+                font=('Segoe UI', 10, 'bold'),
+                bg=COLORS['bg_medium'],
+                fg=COLORS['fg_white']).pack(anchor=tk.W, pady=(0, 5))
+        
+        # TreeView pour les menaces
+        tree_frame = tk.Frame(left_panel, bg=COLORS['bg_dark'])
+        tree_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # Scrollbars
+        tree_vscroll = ttk.Scrollbar(tree_frame, orient=tk.VERTICAL)
+        tree_hscroll = ttk.Scrollbar(tree_frame, orient=tk.HORIZONTAL)
+        
+        self.threats_tree = ttk.Treeview(tree_frame,
+                                        columns=('Severity', 'Process', 'PID', 'Score', 'Time'),
+                                        show='tree headings',
+                                        yscrollcommand=tree_vscroll.set,
+                                        xscrollcommand=tree_hscroll.set)
+        
+        tree_vscroll.config(command=self.threats_tree.yview)
+        tree_hscroll.config(command=self.threats_tree.xview)
+        
+        # Configuration des colonnes
+        self.threats_tree.heading('#0', text='Type')
+        self.threats_tree.heading('Severity', text='Sévérité')
+        self.threats_tree.heading('Process', text='Processus')
+        self.threats_tree.heading('PID', text='PID')
+        self.threats_tree.heading('Score', text='Score')
+        self.threats_tree.heading('Time', text='Heure')
+        
+        self.threats_tree.column('#0', width=150)
+        self.threats_tree.column('Severity', width=80)
+        self.threats_tree.column('Process', width=200)
+        self.threats_tree.column('PID', width=60)
+        self.threats_tree.column('Score', width=60)
+        self.threats_tree.column('Time', width=100)
+        
+        # Style du TreeView
+        style = ttk.Style()
+        style.theme_use('clam')
+        style.configure('Treeview',
+                       background=COLORS['bg_dark'],
+                       foreground=COLORS['fg_white'],
+                       fieldbackground=COLORS['bg_dark'],
+                       borderwidth=0)
+        style.configure('Treeview.Heading',
+                       background=COLORS['bg_light'],
+                       foreground=COLORS['fg_white'],
+                       borderwidth=0)
+        style.map('Treeview',
+                 background=[('selected', COLORS['bg_light'])],
+                 foreground=[('selected', COLORS['fg_white'])])
+        
+        self.threats_tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        tree_vscroll.pack(side=tk.RIGHT, fill=tk.Y)
+        tree_hscroll.pack(side=tk.BOTTOM, fill=tk.X)
+        
+        # Bind selection pour afficher les détails
+        self.threats_tree.bind('<<TreeviewSelect>>', self._on_threat_select)
+        
+        # Panneau droit: Détails JSON
+        right_panel = tk.Frame(content_frame, bg=COLORS['bg_medium'])
+        right_panel.pack(side=tk.RIGHT, fill=tk.BOTH, expand=False, padx=(10, 0))
+        right_panel.config(width=400)
+        
+        tk.Label(right_panel, text="Détails (JSON)",
+                font=('Segoe UI', 10, 'bold'),
+                bg=COLORS['bg_medium'],
+                fg=COLORS['fg_white']).pack(anchor=tk.W, pady=(0, 5))
+        
+        # Zone de texte pour les détails JSON
+        details_frame = tk.Frame(right_panel, bg=COLORS['bg_dark'])
+        details_frame.pack(fill=tk.BOTH, expand=True)
+        
+        self.threats_details = scrolledtext.ScrolledText(
+            details_frame,
+            font=('Consolas', 9),
+            bg=COLORS['bg_dark'],
+            fg=COLORS['fg_white'],
+            insertbackground=COLORS['fg_white'],
+            relief='flat',
+            wrap=tk.WORD
+        )
+        self.threats_details.pack(fill=tk.BOTH, expand=True)
+        self.threats_details.insert(1.0, "Sélectionnez une menace dans la liste pour voir les détails JSON.\n\nDémarrez la surveillance pour commencer la détection.")
+        
+        # Stocker les données des menaces
+        self.threats_data = []
+    
+    def _on_threat_select(self, event):
+        """Affiche les détails JSON de la menace sélectionnée"""
+        selection = self.threats_tree.selection()
+        if not selection:
+            return
+        
+        item = self.threats_tree.item(selection[0])
+        item_id = item['values'][0] if item['values'] else None
+        
+        if not item_id:
+            return
+        
+        # Trouver les détails de la menace
+        for threat in self.threats_data:
+            threat_id = threat.get('alert_id', '')
+            threat_pid = threat.get('process_pid', '')
+            
+            if str(threat_id) == str(item_id) or str(f"PROC_{threat_pid}") == str(item_id):
+                self.threats_details.delete(1.0, tk.END)
+                self.threats_details.insert(1.0, json.dumps(threat, indent=2, ensure_ascii=False))
+                break
+    
+    def refresh_threats(self):
+        """Actualise la liste des menaces - UNIQUEMENT CRITICAL - AFFICHAGE DIRECT"""
+        if not self.agent or not self.monitoring:
+            return
+        
+        try:
+            # Obtenir UNIQUEMENT les alertes CRITICAL
+            from alerts.alert_manager import AlertSeverity
+            alert_manager = self.agent.get_alert_manager()
+            all_alerts = alert_manager.get_alerts(resolved=False)
+            critical_alerts = [a for a in all_alerts if a.severity == AlertSeverity.CRITICAL]
+            
+            # Obtenir UNIQUEMENT les processus CRITICAL
+            rules_engine = self.agent.get_rules_engine()
+            all_suspicious = rules_engine.get_suspicious_processes()
+            critical_processes = [p for p in all_suspicious if p.risk_level == 'CRITICAL']
+            
+            # Stocker les données
+            self.threats_data = []
+            
+            # Effacer l'arbre
+            for item in self.threats_tree.get_children():
+                self.threats_tree.delete(item)
+            
+            # Ajouter UNIQUEMENT les alertes CRITICAL
+            for alert in critical_alerts:
+                alert_dict = alert.to_dict()
+                self.threats_data.append(alert_dict)
+                
+                time_str = datetime.fromtimestamp(alert.timestamp).strftime("%H:%M:%S")
+                
+                self.threats_tree.insert('', tk.END,
+                                        text=f"🔴 {alert.alert_type}",
+                                        values=(alert.alert_id, 'CRITICAL', alert.process_name, 
+                                               alert.process_pid, 'N/A', time_str))
+            
+            # Ajouter UNIQUEMENT les processus CRITICAL
+            for proc_score in critical_processes:
+                proc_dict = proc_score.to_dict()
+                self.threats_data.append(proc_dict)
+                
+                time_str = datetime.fromtimestamp(proc_score.last_updated).strftime("%H:%M:%S")
+                
+                self.threats_tree.insert('', tk.END,
+                                        text=f"🔴 Processus Critique",
+                                        values=(f"PROC_{proc_score.process_pid}", 'CRITICAL',
+                                               proc_score.process_name, proc_score.process_pid,
+                                               proc_score.total_score, time_str))
+            
+            # Log seulement si des menaces critiques sont trouvées
+            if critical_alerts or critical_processes:
+                self.log_activity("THREATS", f"🔴 {len(critical_alerts)} alertes critiques, {len(critical_processes)} processus critiques", "ERROR")
+            
+        except Exception as e:
+            self.log_activity("ERROR", f"Erreur actualisation menaces: {e}", "ERROR")
+    
+    def export_threats_json(self):
+        """Exporte les menaces en JSON"""
+        if not self.threats_data:
+            messagebox.showwarning("Attention", "Aucune menace à exporter")
+            return
+        
+        try:
+            filename = filedialog.asksaveasfilename(
+                defaultextension=".json",
+                filetypes=[("Fichiers JSON", "*.json"), ("Tous les fichiers", "*.*")],
+                title="Exporter les menaces"
+            )
+            
+            if filename:
+                with open(filename, 'w', encoding='utf-8') as f:
+                    json.dump(self.threats_data, f, indent=2, ensure_ascii=False)
+                
+                messagebox.showinfo("Succès", f"Menaces exportées vers:\n{filename}")
+                self.log_activity("EXPORT", "✓ Menaces exportées en JSON", "SUCCESS")
+                
+        except Exception as e:
+            messagebox.showerror("Erreur", f"Erreur lors de l'export: {e}")
+    
+    def clear_threats(self):
+        """Efface la liste des menaces"""
+        for item in self.threats_tree.get_children():
+            self.threats_tree.delete(item)
+        self.threats_details.delete(1.0, tk.END)
+        self.threats_data = []
+        self.log_activity("THREATS", "Liste des menaces effacée", "INFO")
     
     def _create_stats_tab(self, notebook):
         """Crée l'onglet des statistiques"""
@@ -607,15 +857,11 @@ class KeyloggerDetectorGUI:
         self._animate_status_circle()
     
     def _animate_status_circle(self):
-        """Anime le cercle de statut (optimisé)"""
-        if self.monitoring and self.animation_running:
-            # Pulse effect moins fréquent (1.5 secondes au lieu de 1)
-            current_color = self.status_circle.itemcget(self.status_circle_id, 'fill')
-            new_color = COLORS['fg_white'] if current_color == COLORS['fg_gray'] else COLORS['fg_gray']
-            self.status_circle.itemconfig(self.status_circle_id, fill=new_color)
-        
+        """Anime le cercle de statut - DÉSACTIVÉ pour performance"""
+        # Animation désactivée pour améliorer les performances
+        # Le cercle reste fixe selon l'état (blanc si actif, gris si arrêté)
         if self.animation_running:
-            self.root.after(1500, self._animate_status_circle)
+            self.root.after(5000, self._animate_status_circle)  # Vérifier toutes les 5 secondes seulement
     
     def _flash_alert_indicator(self):
         """Flash l'indicateur d'alerte"""
@@ -624,17 +870,25 @@ class KeyloggerDetectorGUI:
         self.root.after(500, lambda: self.cards['alerts']['value'].config(fg=original_color))
     
     def _start_update_loop(self):
-        """Démarre la boucle de mise à jour optimisée"""
+        """Démarre la boucle de mise à jour optimisée - RÉDUITE"""
         def update_loop():
+            threat_update_counter = 0
             while self.animation_running:
                 try:
-                    # Mise à jour moins fréquente (5 secondes au lieu de 2)
+                    # Mise à jour beaucoup moins fréquente (10 secondes)
                     if self.monitoring:
                         self.update_interface()
-                    time.sleep(5)
+                        
+                        # Actualiser les menaces toutes les 20 secondes (affichage direct)
+                        threat_update_counter += 1
+                        if threat_update_counter >= 2:  # 2 * 10 = 20 secondes
+                            if hasattr(self, 'threats_tree'):
+                                self.root.after(0, self.refresh_threats)
+                            threat_update_counter = 0
+                    time.sleep(10)  # Augmenté à 10 secondes pour performance
                 except Exception as e:
                     print(f"Erreur update loop: {e}")
-                    time.sleep(10)
+                    time.sleep(20)
         
         self.update_thread = threading.Thread(target=update_loop, daemon=True)
         self.update_thread.start()
@@ -691,6 +945,10 @@ class KeyloggerDetectorGUI:
             self.update_status("Surveillance active - Agent démarré", "active")
             
             self.log_activity("SYSTEM", "Surveillance démarrée avec succès", "SUCCESS")
+            
+            # Actualiser IMMÉDIATEMENT l'onglet des menaces au démarrage
+            if hasattr(self, 'threats_tree'):
+                self.root.after(500, self.refresh_threats)  # Après 500ms pour laisser l'agent démarrer
             
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible de démarrer: {e}")
@@ -806,26 +1064,31 @@ STATISTIQUES GÉNÉRALES:
             print(f"Erreur update interface: {e}")
     
     def log_activity(self, category, message, level="INFO"):
-        """Ajoute un log d'activité avec limite de mémoire"""
+        """Ajoute un log d'activité - UNIQUEMENT CRITICAL/ERROR"""
+        # Filtrer: ne logger que CRITICAL, ERROR, et quelques SYSTEM importants
+        if level not in ["ERROR", "CRITICAL"] and category not in ["SYSTEM", "THREATS"]:
+            return  # Ignorer les logs normaux pour performance
+        
         timestamp = datetime.now().strftime("%H:%M:%S")
         
         icons = {
             "SUCCESS": "✓",
             "INFO": "●",
             "WARNING": "⚠",
-            "ERROR": "✗"
+            "ERROR": "✗",
+            "CRITICAL": "🔴"
         }
         
         icon = icons.get(level, "●")
         log_entry = f"[{timestamp}] [{category:^10}] {icon} {message}\n"
         
-        # Limiter le nombre de lignes dans les logs (max 500 lignes)
-        self._limit_text_widget(self.activity_log, 500)
+        # Limiter le nombre de lignes dans les logs (max 200 lignes pour performance)
+        self._limit_text_widget(self.activity_log, 200)
         self.activity_log.insert(tk.END, log_entry)
         self.activity_log.see(tk.END)
         
-        # Limiter aussi les logs détaillés (max 1000 lignes)
-        self._limit_text_widget(self.detailed_logs, 1000)
+        # Limiter aussi les logs détaillés (max 300 lignes)
+        self._limit_text_widget(self.detailed_logs, 300)
         self.detailed_logs.insert(tk.END, log_entry)
         self.detailed_logs.see(tk.END)
     
