@@ -338,3 +338,21 @@ class AlertManager:
         
         if old_alerts:
             print(f"[AlertManager] {len(old_alerts)} anciennes alertes supprimées")
+    
+    def export_full_summary(self, summary_data: dict, filename: str = "terminal_output.json"):
+        """Exporte l'intégralité des résultats en gérant les Enums (RuleSeverity)"""
+        
+        # Petite classe interne pour gérer les Enums
+        class EnumEncoder(json.JSONEncoder):
+            def default(self, obj):
+                if hasattr(obj, 'name'): # Pour RuleSeverity ou AlertSeverity
+                    return obj.name
+                return super().default(obj)
+
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                # On utilise l'encoder ici
+                json.dump(summary_data, f, indent=4, ensure_ascii=False, cls=EnumEncoder)
+            print(f"\n[+] Rapport JSON généré avec succès : {filename}")
+        except Exception as e:
+            print(f"[-] Erreur lors de l'export JSON : {e}")

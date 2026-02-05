@@ -48,11 +48,17 @@ class KeyloggerDetectorGUI:
         self.root.geometry("1400x900")
         self.root.configure(bg=COLORS['bg_dark'])
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.root.after(3000, self.periodic_json_update)
+
         
         # Variables
         self.agent = None
         self.monitoring = False
         self.animation_running = True
+
+        self.json_report_path = "terminal_output.json"
+        self.last_json_mtime = 0
+
         
         # Configuration du style moderne
         self._setup_modern_style()
@@ -64,12 +70,19 @@ class KeyloggerDetectorGUI:
         self._start_animations()
         
         # Démarrer la mise à jour périodique
-        self._start_update_loop()
+        #self._start_update_loop()
         
         # Message de bienvenue
         self.log_activity("SYSTEM", "Interface graphique chargée avec succès", "SUCCESS")
         self.update_status("Prêt - Cliquez sur 'Démarrer' pour lancer la surveillance", "ready")
     
+    def periodic_json_update(self):
+        if not self._is_window_alive():
+            return
+
+        self.update_from_json()
+        self.root.after(3000, self.periodic_json_update)  # toutes les 3s
+
     def _setup_modern_style(self):
         """Configure le style moderne de l'interface"""
         style = ttk.Style()
@@ -155,6 +168,172 @@ class KeyloggerDetectorGUI:
             pass  # Fenêtre détruite
         except Exception as e:
             print(f"Erreur traitement update: {e}")
+
+    def load_json_report(self):
+        """Charge le rapport JSON généré par l'agent"""
+        if not os.path.exists(self.json_report_path):
+            return None
+
+        try:
+            mtime = os.path.getmtime(self.json_report_path)
+
+            # Ne relire que si le fichier a changé
+            if mtime == self.last_json_mtime:
+                return None
+
+            self.last_json_mtime = mtime
+
+            with open(self.json_report_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+
+        except Exception as e:
+            self.log_activity("ERROR", f"Erreur lecture JSON: {e}", "ERROR")
+            return None
+
+    def update_from_json(self):
+        if not os.path.exists(self.json_report_path):
+            return
+
+        try:
+            with open(self.json_report_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except:
+            return
+    
+        rules = data.get("rules_summary", {})
+        alerts = data.get("alerts_summary", {})
+        stats = data.get("agent_stats", {})
+
+        self.cards['processes']['value'].config(text=str(rules.get("total_processes", 0)))
+        self.cards['suspicious']['value'].config(text=str(rules.get("suspicious_processes", 0)))
+        self.cards['alerts']['value'].config(text=str(alerts.get("total_alerts", 0)))
+        self.cards['scans']['value'].config(text=str(stats.get("total_scans", 0)))
+
+    
+    def refresh_critical_threats(self):
+        """Met à jour le TreeView avec les menaces HIGH et CRITICAL depuis le JSON."""
+        if not os.path.exists(self.json_report_path):
+            return
+
+        try:
+            with open(self.json_report_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print("Erreur lecture JSON:", e)
+            return
+
+        recent_alerts = data.get("alerts_summary", {}).get("recent_alerts", [])
+
+        # On ne garde que HIGH ou CRITICAL
+        filtered_alerts = [
+            alert for alert in recent_alerts
+            if alert.get("severity", "").upper() in ["HIGH", "CRITICAL"]
+        ]
+
+        # Vider l'ancien contenu
+        for item in self.threats_tree.get_children():
+            self.threats_tree.delete(item)
+
+        # Ajouter les alertes filtrées
+        for alert in filtered_alerts:
+            severity = alert.get("severity", "")
+            process = alert.get("process_name", "")
+            pid = alert.get("process_pid", "")
+            score = alert.get("evidence", {}).get("total_score", "")
+            timestamp = alert.get("timestamp", "")
+
+            # Formater l'heure lisible
+            try:
+                ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(timestamp))
+            except:
+                ts_str = ""
+
+            self.threats_tree.insert(
+                '', 'end',
+                text=alert.get("title", "Alerte"),
+                values=(severity, process, pid, score, ts_str)
+            )
+
+    def update_stats(self, summary_json):
+        """Met à jour l'onglet Statistiques à partir du JSON."""
+        now_ts = time.time()
+    
+        agent_stats = summary_json.get("agent_stats", {})
+        alerts_summary = summary_json.get("alerts_summary", {})
+
+        # Calcul uptime
+        start_time = agent_stats.get("start_time", now_ts)
+        uptime_sec = int(now_ts - start_time)
+        hours, remainder = divmod(uptime_sec, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        uptime_str = f"{hours}h {minutes}m {seconds}s"
+
+        # Dernier scan : timestamp du dernier alert ou start_time si vide
+        recent_alerts = alerts_summary.get("recent_alerts", [])
+        if recent_alerts:
+            last_alert_ts = max(alert.get("timestamp", 0) for alert in recent_alerts)
+            last_scan = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_alert_ts))
+        else:
+            last_scan = "Aucun"
+
+        stats_data = {
+            "uptime": uptime_str,
+            "total_scans": agent_stats.get("total_scans", 0),
+            "processes_analyzed": agent_stats.get("processes_scanned", 0),
+            "alerts_generated": agent_stats.get("alerts_generated", 0),
+            "last_scan": last_scan,
+            "agent_status": "En surveillance" if getattr(self, "monitoring", False) else "Inactif"
+        }
+
+        # Mettre à jour les labels
+        for key, value in stats_data.items():
+            if key in self.stats_labels:
+                self.stats_labels[key].config(text=str(value))
+    
+    def refresh_detailed_logs(self):
+        """Affiche les logs détaillés à partir du JSON."""
+        if not os.path.exists(self.json_report_path):
+            return
+
+        try:
+            with open(self.json_report_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as e:
+            print("Erreur lecture JSON pour logs:", e)
+            return
+
+        self.detailed_logs.delete("1.0", tk.END)  # Vider l'ancien contenu
+        recent_alerts = data.get("alerts_summary", {}).get("recent_alerts", [])
+
+        for alert in recent_alerts:
+            ts = alert.get("timestamp", 0)
+            ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+            severity = alert.get("severity", "")
+            process = alert.get("process_name", "")
+            pid = alert.get("process_pid", "")
+            score = alert.get("evidence", {}).get("total_score", "")
+            title = alert.get("title", "")
+            description = alert.get("description", "")
+        
+            # Récupérer le fichier suspect si disponible
+            files = []
+            for rule in alert.get("evidence", {}).get("rule_results", []):
+                file_path = rule.get("evidence", {}).get("file_path")
+                if file_path:
+                    files.append(file_path)
+
+            log_entry = (
+                f"[{ts_str}] [{severity}] Process: {process} (PID {pid}) Score: {score}\n"
+                f"Title: {title}\nDescription: {description}\n"
+            )
+            if files:
+                log_entry += "Files:\n" + "\n".join(f"  - {f}" for f in files) + "\n"
+            log_entry += "-"*80 + "\n"
+
+            self.detailed_logs.insert(tk.END, log_entry)
+    
+        self.detailed_logs.see(tk.END)  # Scroll en bas
+
 
     # Handlers pour les événements de l'agent
     def _handle_agent_started(self, data):
@@ -639,66 +818,35 @@ class KeyloggerDetectorGUI:
                 break
     
     def refresh_threats(self):
-        """Actualise la liste des menaces - UNIQUEMENT CRITICAL - AFFICHAGE DIRECT"""
-        if not self._is_window_alive():
+        if not os.path.exists(self.json_report_path):
             return
-        
-        if not self.agent or not self.monitoring:
-            return
-        
-        try:
-            # Obtenir UNIQUEMENT les alertes CRITICAL
-            from alerts.alert_manager import AlertSeverity
-            alert_manager = self.agent.get_alert_manager()
-            all_alerts = alert_manager.get_alerts(resolved=False)
-            critical_alerts = [a for a in all_alerts if a.severity == AlertSeverity.CRITICAL]
-            
-            # Obtenir UNIQUEMENT les processus CRITICAL
-            rules_engine = self.agent.get_rules_engine()
-            all_suspicious = rules_engine.get_suspicious_processes()
-            critical_processes = [p for p in all_suspicious if p.risk_level == 'CRITICAL']
-            
-            # Stocker les données
-            self.threats_data = []
-            
-            # Effacer l'arbre
-            for item in self.threats_tree.get_children():
-                self.threats_tree.delete(item)
-            
-            # Ajouter UNIQUEMENT les alertes CRITICAL
-            for alert in critical_alerts:
-                alert_dict = alert.to_dict()
-                self.threats_data.append(alert_dict)
-                
-                time_str = datetime.fromtimestamp(alert.timestamp).strftime("%H:%M:%S")
-                
-                self.threats_tree.insert('', tk.END,
-                                        text=f"🔴 {alert.alert_type}",
-                                        values=(alert.alert_id, 'CRITICAL', alert.process_name, 
-                                               alert.process_pid, 'N/A', time_str))
-            
-            # Ajouter UNIQUEMENT les processus CRITICAL
-            for proc_score in critical_processes:
-                proc_dict = proc_score.to_dict()
-                self.threats_data.append(proc_dict)
-                
-                time_str = datetime.fromtimestamp(proc_score.last_updated).strftime("%H:%M:%S")
-                
-                self.threats_tree.insert('', tk.END,
-                                        text=f"🔴 Processus Critique",
-                                        values=(f"PROC_{proc_score.process_pid}", 'CRITICAL',
-                                               proc_score.process_name, proc_score.process_pid,
-                                               proc_score.total_score, time_str))
-            
-            # Log seulement si des menaces critiques sont trouvées
-            if critical_alerts or critical_processes:
-                self.log_activity("THREATS", f"🔴 {len(critical_alerts)} alertes critiques, {len(critical_processes)} processus critiques", "ERROR")
-            
-        except (tk.TclError, RuntimeError, AttributeError):
-            pass  # Fenêtre détruite
-        except Exception as e:
-            if self._is_window_alive():
-                self.log_activity("ERROR", f"Erreur actualisation menaces: {e}", "ERROR")
+
+        with open(self.json_report_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        self.threats_tree.delete(*self.threats_tree.get_children())
+        self.threats_data = []
+
+        for alert in data.get("alerts", []):
+            if alert.get("severity") != "CRITICAL":
+                continue
+
+            self.threats_data.append(alert)
+
+            self.threats_tree.insert(
+                "",
+                tk.END,
+                text="🔴 Alerte Critique",
+                values=(
+                    alert.get("alert_id"),
+                    alert.get("severity"),
+                    alert.get("process_name"),
+                    alert.get("process_pid"),
+                    alert.get("score"),
+                    alert.get("timestamp")
+                )
+            )
+
     
     def export_threats_json(self):
         """Exporte les menaces en JSON"""
@@ -974,77 +1122,83 @@ class KeyloggerDetectorGUI:
             self.stop_monitoring()
     
     def start_monitoring(self):
-        """Démarre la surveillance"""
-        try:
-            from core.agent import KeyloggerDetectorAgent
-            self.agent = KeyloggerDetectorAgent()
-            
-            self._setup_agent_callbacks()
-            self.agent.start()
-            
-            self.monitoring = True
-            self.start_button.config(text="⏸ Arrêter")
-            self.status_text.config(text="En surveillance", fg=COLORS['fg_white'])
-            self.status_circle.itemconfig(self.status_circle_id, fill=COLORS['fg_white'])
-            self.update_status("Surveillance active - Agent démarré", "active")
-            
-            self.log_activity("SYSTEM", "Surveillance démarrée avec succès", "SUCCESS")
-            
-            # Actualiser IMMÉDIATEMENT l'onglet des menaces au démarrage
-            if hasattr(self, 'threats_tree'):
-                self.root.after(500, self.refresh_threats)  # Après 500ms pour laisser l'agent démarrer
-            
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Impossible de démarrer: {e}")
-            self.log_activity("ERROR", f"Échec démarrage: {e}", "ERROR")
+        from core.agent import KeyloggerDetectorAgent
+        self.agent = KeyloggerDetectorAgent()
+        if self.monitoring:
+            return  # Évite de démarrer plusieurs fois
+
+        self.agent.start()
+
+        # Mise à jour UI
+        self.start_button.config(text="⏸ Arrêter")
+        self.status_text.config(text="En surveillance", fg=COLORS['fg_white'])
+        self.status_circle.itemconfig(self.status_circle_id, fill=COLORS['fg_white'])
+
+        self.monitoring = True
+
+        # Fonction qui tourne en arrière-plan
+        def monitor_loop():
+            last_summary = None
+            while self.monitoring:
+                try:
+                    summary = self.agent.get_detection_summary()
+
+                    # On n'écrit dans le JSON que si il y a une nouvelle détection
+                    if summary != last_summary:
+                        self.agent.alert_manager.export_full_summary(summary)
+                        self.update_from_json()
+                        self.refresh_critical_threats()   # met à jour la liste des menaces HIGH/CRITICAL
+                        self.update_stats(summary)          # pour stats
+                        self.refresh_detailed_logs()        # pour logs détaillés
+                        last_summary = summary
+
+                    # Pause courte pour ne pas saturer le CPU
+                    time.sleep(0.5)  # 0.5s suffit pour rester réactif
+
+                except Exception as e:
+                    print("Erreur dans le monitoring :", e)
+    
+        # Thread daemon pour que le programme puisse se fermer proprement
+        threading.Thread(target=monitor_loop, daemon=True).start()
+
     
     def stop_monitoring(self):
-        """Arrête la surveillance"""
-        try:
-            if self.agent:
-                self.agent.stop()
-                self.agent = None
-            
-            self.monitoring = False
-            self.start_button.config(text="▶ Démarrer")
-            self.status_text.config(text="Arrêté", fg=COLORS['fg_dim'])
-            self.status_circle.itemconfig(self.status_circle_id, fill=COLORS['fg_dim'])
-            self.update_status("Surveillance arrêtée", "stopped")
-            
-            self.log_activity("SYSTEM", "Surveillance arrêtée", "INFO")
-            
-        except Exception as e:
-            messagebox.showerror("Erreur", f"Erreur lors de l'arrêt: {e}")
+        if not self.agent:
+            return
+
+        # On arrête la boucle de monitoring dans le thread
+        self.monitoring = False
+
+        # Arrêter l'agent proprement
+        self.agent.stop()
+
+        # Mettre à jour l'UI
+        self.start_button.config(text="▶ Démarrer")
+        self.status_text.config(text="Arrêté", fg=COLORS['fg_dim'])
+        self.status_circle.itemconfig(self.status_circle_id, fill=COLORS['fg_dim'])
+
+        # Récupérer et enregistrer le résumé final
+        summary = self.agent.get_detection_summary()
+        self.agent.alert_manager.export_full_summary(summary)
+
+        # Libérer l'agent
+        self.agent = None
+
+        # Mettre à jour l'état local depuis le JSON
+        self.update_from_json()
+
     
     def quick_scan(self):
-        """Lance un scan rapide"""
-        def scan_thread():
-            try:
-                if not self._is_window_alive():
-                    return
-                
-                self.update_status("Scan rapide en cours...", "active")
-                self.log_activity("SCAN", "Démarrage du scan rapide", "INFO")
-                
-                if self.agent and self.monitoring:
-                    time.sleep(2)
-                else:
-                    time.sleep(2)
-                
-                if not self._is_window_alive():
-                    return
-                
-                self.update_status("Scan rapide terminé", "ready")
-                self.log_activity("SCAN", "✓ Scan rapide terminé", "SUCCESS")
-                
-            except (tk.TclError, RuntimeError, AttributeError):
-                pass  # Fenêtre détruite
-            except Exception as e:
-                if self._is_window_alive():
-                    self.update_status("Erreur lors du scan", "error")
-                    self.log_activity("ERROR", f"Échec scan: {e}", "ERROR")
-        
-        threading.Thread(target=scan_thread, daemon=True).start()
+        if not self.agent:
+            return
+
+        self.agent.force_scan()
+
+        summary = self.agent.get_detection_summary()
+        self.agent.alert_manager.export_full_summary(summary)
+
+        self.update_from_json()
+
     
     def export_logs(self):
         """Exporte les logs"""
@@ -1251,6 +1405,7 @@ STATISTIQUES GÉNÉRALES:
     def run(self):
         """Lance l'interface graphique"""
         self.root.mainloop()
+
 
 
 if __name__ == "__main__":

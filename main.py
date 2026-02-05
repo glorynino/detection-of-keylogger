@@ -207,6 +207,23 @@ def run_console_mode():
         print_status(f"Erreur critique: {e}", "ERROR")
         security_logger.log_system_event("ERROR", f"Erreur dans le mode console: {e}", "ERROR")
     finally:
+        # --- AJOUT POUR LE JSON ---
+        print("\n" + SEPARATOR)
+        print_status("Génération du rapport final avant fermeture...", "INFO")
+        
+        # On récupère le résumé complet de l'agent
+        full_results = agent.get_detection_summary()
+        
+        # On ajoute des détails sur la session pour que le JSON soit propre
+        full_results["session_metadata"] = {
+            "end_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            "scan_iterations": scan_count,
+            "mode": "Console (Filtered: High/Critical)"
+        }
+        
+        # On appelle l'export via l'alert_manager de l'agent
+        agent.alert_manager.export_full_summary(full_results, "terminal_output.json")
+        # ---------------------------
         agent.stop()
         print_status("Agent arrêté proprement", "SUCCESS")
 
