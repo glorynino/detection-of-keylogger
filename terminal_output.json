@@ -1,0 +1,34 @@
+{
+    "agent_stats": {
+        "start_time": 1770399339.1215158,
+        "total_scans": 8,
+        "processes_scanned": 0,
+        "alerts_generated": 0,
+        "keyloggers_detected": 0
+    },
+    "rules_summary": {
+        "total_processes": 2,
+        "suspicious_processes": 0,
+        "high_risk_processes": 0,
+        "risk_distribution": {
+            "LOW": 2
+        },
+        "total_events": 5,
+        "active_rules": 3
+    },
+    "alerts_summary": {
+        "total_alerts": 0,
+        "unacknowledged_alerts": 0,
+        "critical_alerts": 0,
+        "alert_counters": {
+            "total": 0,
+            "low": 0,
+            "medium": 0,
+            "high": 0,
+            "critical": 0
+        },
+        "recent_alerts": []
+    },
+    "suspicious_processes": [],
+    "high_risk_processes": []
+}

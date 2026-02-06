@@ -1,0 +1,14 @@
+2026-02-06 18:32:32,543 - KeyloggerDetector - INFO - SYSTEM [AGENT] Agent de surveillance démarré
+2026-02-06 18:32:32,562 - KeyloggerDetector - INFO - NETWORK [NEW_CONNECTION] 20.54.232.160:443 | Process: svchost.exe (PID: 8240)
+2026-02-06 18:32:33,063 - KeyloggerDetector - INFO - NETWORK [NEW_CONNECTION] 98.66.133.186:443 | Process: svchost.exe (PID: 4156)
+2026-02-06 18:32:33,606 - KeyloggerDetector - ERROR - SYSTEM [ERROR] Erreur lors du scan de persistance: 'int' object has no attribute 'lower'
+2026-02-06 18:32:39,694 - KeyloggerDetector - INFO - PROCESS [NEW_PROCESS] python.exe (PID: 7624) - Exe: C:\Users\asus\Desktop\projet\detection-of-keylogger\keylogger_detector_env\Scripts\python.exe
+2026-02-06 18:32:40,175 - KeyloggerDetector - INFO - PROCESS [NEW_PROCESS] python.exe (PID: 9636) - Exe: C:\Python312\python.exe
+2026-02-06 18:32:52,201 - KeyloggerDetector - WARNING - API [ReadProcessMemory, WriteProcessMemory, VirtualAllocEx, CreateRemoteThread, VirtualAllocEx, VirtualAllocEx, ReadProcessMemory, WriteProcessMemory, VirtualAllocEx, CreateRemoteThread] Process: python.exe (PID: 7624)
+2026-02-06 18:35:40,218 - KeyloggerDetector - INFO - SYSTEM [AGENT] Agent de surveillance démarré
+2026-02-06 18:35:40,279 - KeyloggerDetector - INFO - NETWORK [NEW_CONNECTION] 23.55.48.32:80 | Process: svchost.exe (PID: 4132)
+2026-02-06 18:35:40,446 - KeyloggerDetector - INFO - NETWORK [NEW_CONNECTION] 98.66.133.186:443 | Process: svchost.exe (PID: 4156)
+2026-02-06 18:35:41,148 - KeyloggerDetector - ERROR - SYSTEM [ERROR] Erreur lors du scan de persistance: 'int' object has no attribute 'lower'
+2026-02-06 18:35:47,665 - KeyloggerDetector - INFO - PROCESS [NEW_PROCESS] python.exe (PID: 14300) - Exe: C:\Users\asus\Desktop\projet\detection-of-keylogger\keylogger_detector_env\Scripts\python.exe
+2026-02-06 18:35:47,865 - KeyloggerDetector - INFO - PROCESS [NEW_PROCESS] python.exe (PID: 20492) - Exe: C:\Python312\python.exe
+2026-02-06 18:36:45,424 - KeyloggerDetector - WARNING - API [ReadProcessMemory, WriteProcessMemory, VirtualAllocEx, CreateRemoteThread, ReadProcessMemory, WriteProcessMemory, VirtualAllocEx, CreateRemoteThread, VirtualAllocEx, VirtualAllocEx] Process: python.exe (PID: 14300)
