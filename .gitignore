@@ -1,4 +1,12 @@
-echo __pycache__/ >> .gitignore
-echo *.pyc >> .gitignore
-echo *.log >> .gitignore
-echo *.json >> .gitignore
+# Python
+__pycache__/
+*.pyc
+
+# Virtual environment
+keylogger_detector_env/
+venv/
+.env/
+
+# Logs & outputs
+*.log
+*.json
